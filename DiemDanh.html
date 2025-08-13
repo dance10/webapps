@@ -1,0 +1,37 @@
+<div class="page-content">
+  <div class="page-header">
+    <h2>Điểm Danh Theo Buổi Học</h2>
+    <div style="display: flex; gap: 1rem; align-items: center;">
+      <label for="attendance-date-select" style="font-weight: 500;">Chọn ngày:</label>
+      <input type="date" id="attendance-date-select" class="form-control" onchange="APP.renderSessionsForDate()">
+    </div>
+  </div>
+
+  <div id="sessions-list-container">
+    <div class="placeholder-text">Vui lòng chọn một ngày để xem các buổi học đã lên lịch.</div>
+  </div>
+
+  <div id="attendance-taking-container" style="display: none; margin-top: 2rem;">
+      <h3 id="attendance-session-title" style="margin-bottom: 1rem; color: var(--dark-blue);"></h3>
+      <div class="data-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Mã HV</th>
+              <th>Họ Tên</th>
+              <th>Trạng Thái</th>
+              <th>Ghi Chú</th>
+            </tr>
+          </thead>
+          <tbody id="attendance-table-body">
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
+        <button class="btn btn-primary" onclick="APP.saveAttendance()">
+          <i class="fas fa-save"></i> Lưu Điểm Danh
+        </button>
+      </div>
+  </div>
+
+</div>

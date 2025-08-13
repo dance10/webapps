@@ -1,0 +1,19 @@
+<div class="page-content">
+  <div class="page-header">
+    <h2>Thời Khóa Biểu Giáo Viên</h2>
+    <div class="controls-container" style="display: flex; gap: 1rem; align-items: center;">
+      <select id="tkb-teacher-select" class="form-control" onchange="APP.renderTeacherSchedule()">
+        <option value="">-- Tất cả giáo viên --</option>
+      </select>
+      <select id="tkb-range-select" class="form-control" onchange="APP.renderTeacherSchedule()">
+        <option value="this-week">Tuần này</option>
+        <option value="next-week">Tuần tới</option>
+        <option value="this-month">Tháng này</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="tkb-container">
+    <div class="placeholder-text">Vui lòng chọn giáo viên để xem thời khóa biểu.</div>
+  </div>
+</div>

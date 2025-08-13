@@ -1,0 +1,71 @@
+<div class="page-content">
+  <div class="page-header">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <button class="btn btn-secondary" onclick="APP.goBackToMainPage()"><i class="fas fa-arrow-left"></i> Quay lại</button>
+      <h2 id="profile-student-name">Đang tải...</h2>
+    </div>
+  </div>
+
+  <div class="profile-grid">
+    <div class="profile-section">
+      <h3><i class="fas fa-user-circle"></i> Thông tin cá nhân</h3>
+      <ul class="info-list">
+        <li><strong>Mã học viên:</strong> <span id="profile-student-id"></span></li>
+        <li><strong>Ngày sinh:</strong> <span id="profile-student-dob"></span></li>
+        <li><strong>Phụ huynh:</strong> <span id="profile-student-parent"></span></li>
+        <li><strong>Điện thoại:</strong> <span id="profile-student-phone"></span></li>
+      </ul>
+    </div>
+
+    <div class="profile-section">
+      <h3><i class="fas fa-chalkboard-teacher"></i> Các lớp đã ghi danh</h3>
+      <div class="table-responsive" style="max-height: 150px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Tên lớp</th>
+              <th>Ngày ghi danh</th>
+              <th>Loại học phí</th>
+            </tr>
+          </thead>
+          <tbody id="profile-enrollments-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="profile-section" style="margin-top: 1.5rem;">
+    <h3><i class="fas fa-history"></i> Lịch sử Giao dịch</h3>
+    <div class="table-responsive" style="max-height: 250px;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Ngày Đóng</th>
+            <th>Số Tiền (VNĐ)</th>
+            <th>Nội Dung</th>
+            <th>Hình Thức</th>
+          </tr>
+        </thead>
+        <tbody id="profile-transactions-body"></tbody>
+      </table>
+    </div>
+  </div>
+  
+  <div class="profile-section" style="margin-top: 1.5rem;">
+    <h3><i class="fas fa-clipboard-check"></i> Lịch sử Chuyên cần</h3>
+    <div class="table-responsive" style="max-height: 250px;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Ngày</th>
+            <th>Lớp học</th>
+            <th>Trạng thái</th>
+            <th>Ghi chú</th>
+          </tr>
+        </thead>
+        <tbody id="profile-attendance-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>

@@ -1,0 +1,37 @@
+<div class="page-content">
+  <div class="page-header">
+    <h2>Quản Lý Học Viên</h2>
+    <button class="btn btn-primary" onclick="APP.showAddStudentModal()">
+      <i class="fas fa-plus"></i> Thêm Học Viên
+    </button>
+  </div>
+
+  <div class="search-container" style="margin-bottom: 1.5rem;">
+    <input type="search" 
+           id="student-search-input" 
+           class="form-control" 
+           placeholder="Tìm kiếm theo Tên hoặc Mã học viên..." 
+           onkeyup="APP.handleStudentSearch(this)">
+  </div>
+
+  <div class="data-container">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Mã HV</th>
+          <th>Họ Tên</th>
+          <th>Ngày Sinh</th>
+          <th>Phụ Huynh</th>
+          <th>Điện Thoại</th>
+          <th>Lớp</th>
+          <th>Thao Tác</th>
+        </tr>
+      </thead>
+      <tbody id="students-table-body">
+        </tbody>
+    </table>
+  </div>
+
+  <div id="pagination-container" style="margin-top: 1.5rem; display: flex; justify-content: center; align-items: center;">
+    </div>
+  </div>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div class="app-container">
+    <div class="sidebar">
+      <div class="brand">
+        <i class="fas fa-graduation-cap"></i>
+        <span>Tiếng Anh Cô Thuý</span>
+      </div>
+      <nav>
+        <a class="nav-item" data-page="Dashboard" href="#">
+          <i class="fas fa-tachometer-alt"></i>
+          <span>Tổng Quan</span>
+        </a>
+               <a class="nav-item" data-page="BaoCao" href="#">
+          <i class="fas fa-chart-pie"></i>
+          <span>Báo Cáo</span>
+        </a>
+         <a class="nav-item" data-page="QuanLyKhoaHoc" href="#">
+          <i class="fas fa-book-open"></i>
+          <span>Quản Lý Khóa Học</span>
+        </a>
+        <a class="nav-item" data-page="QuanLyLopHoc" href="#">
+          <i class="fas fa-chalkboard-teacher"></i>
+          <span>Quản Lý Lớp Học</span>
+        </a>
+        <a class="nav-item" data-page="QuanLyHocVien" href="#">
+           <i class="fas fa-users"></i>
+          <span>Quản Lý Học Viên</span>
+        </a>
+        <a class="nav-item" data-page="QuanLyGiaoVien" href="#">
+           <i class="fas fa-user-tie"></i>
+          <span>Quản lý Giáo Viên</span>
+        </a>
+        <a class="nav-item" data-page="BangLuong" href="#">
+           <i class="fas fa-money-check-alt"></i>
+          <span>Bảng lương GV</span>
+        </a>
+        <a class="nav-item" data-page="DiemDanh" href="#">
+          <i class="fas fa-clipboard-check"></i>
+           <span>Điểm Danh</span>
+        </a>
+        <a class="nav-item" data-page="ThoiKhoaBieu" href="#">
+          <i class="fas fa-calendar-week"></i>
+          <span>Thời Khóa Biểu</span>
+        </a>
+        <a class="nav-item" data-page="QuanLyLoaiHocPhi" href="#">
+          <i class="fas fa-tags"></i>
+          <span>Loại Học Phí</span>
+        </a>
+        <a class="nav-item" data-page="HocPhi" href="#">
+          <i class="fas fa-dollar-sign"></i>
+          <span>Học Phí</span>
+        </a>
+        <a class="nav-item" data-page="QuanLyChiPhi" href="#">
+          <i class="fas fa-file-invoice-dollar"></i>
+          <span>Quản lý Chi phí</span>
+        </a>
+        <a class="nav-item" data-page="Settings" href="#">
+          <i class="fas fa-cog"></i>
+          <span>Cài đặt</span>
+        </a>
+      </nav>
+    </div>
+
+    <div class="main-content">
+      <div id="loading" style="display: none;">
+        <div class="spinner"></div>
+        <span>Đang tải...</span>
+      </div>
+      
+      <div id="error-container" style="display: none;">
+        <div class="error-message">
+          <i class="fas fa-exclamation-circle"></i>
+          <span id="error-text"></span>
+          <button onclick="hideError()">Đóng</button>
+        </div>
+      </div>
+
+      <div id="page-container">
+        </div>
+    </div>
+  </div>
+
+  <?!= include('Modals'); ?>
+  <?!= include('Scripts'); ?>
+  
+</body>
+</html>

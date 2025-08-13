@@ -1,0 +1,2283 @@
+<script>
+  // Khởi tạo dữ liệu toàn cục, đảm bảo 'teachers' có tồn tại
+  window.APP_DATA = {
+    classes: [],
+    students: [],
+    enrollments: [],
+    sessions: [],
+    feeTypes: [],
+    transactions: [],
+    teachers: [], // Luon khoi tao
+    config: {},
+    currentSessionId: null
+  };
+
+  // --- CÁC HÀM RENDER CHO TỪNG TRANG ---
+  function renderDashboard() {
+    showLoading();
+    // Bay gio, dashboard se tu goi de lay du lieu cua rieng no
+    google.script.run
+      .withSuccessHandler(response => {
+        hideLoading();
+        if (response.success) {
+          const data = response.data;
+          document.getElementById('stat-total-students').textContent = data.totalStudents;
+          document.getElementById('stat-total-classes').textContent = data.totalClasses;
+          document.getElementById('stat-revenue-month').textContent = data.revenueThisMonth.toLocaleString('vi-VN') + ' đ';
+          document.getElementById('stat-expense-month').textContent = data.expenseThisMonth.toLocaleString('vi-VN') + ' đ';
+
+          const profitEl = document.getElementById('stat-profit-month');
+          profitEl.textContent = data.profitThisMonth.toLocaleString('vi-VN') + ' đ';
+          profitEl.style.color = data.profitThisMonth >= 0 ? '#28a745' : '#dc3545';
+
+          const scheduleContainer = document.getElementById('todays-schedule-container');
+          if (data.todaysSchedule.length > 0) {
+            scheduleContainer.innerHTML = data.todaysSchedule.map(session => `
+              <div class="session-button" style="cursor: default;">
+                  <span class="session-time">${session.startTime} - ${session.endTime}</span>
+                  <span class="session-class-name">${session.className}</span>
+                  <span class="session-teacher">${session.teacher ? ('GV: ' + session.teacher) : ''}</span>
+              </div>
+            `).join('');
+          } else {
+            scheduleContainer.innerHTML = '<div class="placeholder-text">Hôm nay không có lớp học nào được lên lịch.</div>';
+          }
+        } else {
+          handleError(response.error);
+        }
+      })
+      .withFailureHandler(e => { hideLoading(); handleError(e); })
+      .getDashboardData();
+  }
+
+  function renderClassesList() {
+    const tbody = document.getElementById('classes-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const role = window.APP_DATA.userRole;
+    const classes = window.APP_DATA.classes || [];
+    const enrollments = window.APP_DATA.enrollments || [];
+    const addClassButton = document.querySelector('.btn-primary[onclick="APP.showAddClassModal()"]');
+    if (addClassButton) {
+      addClassButton.style.display = (role === 'Admin' || role === 'LeTan') ? 'inline-flex' : 'none';
+    }
+    if (classes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center">Không có dữ liệu</td></tr>';
+      return;
+    }
+    classes.forEach(classInfo => {
+      const studentCount = enrollments.filter(e => e.classId === classInfo.id).length;
+      const row = tbody.insertRow();
+      let actionButtons = '';
+      if (role === 'Admin' || role === 'LeTan') {
+        actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showEditClassModal('${classInfo.id}')" title="Sửa" style="margin-right: 5px;"><i class="fas fa-edit"></i></button>`;
+      }
+      if (role === 'Admin') {
+        actionButtons += `<button class="btn btn-danger btn-sm" onclick="APP.deleteClass('${classInfo.id}')" title="Xóa"><i class="fas fa-trash"></i></button>`;
+      }
+      if (actionButtons === '') {
+        actionButtons = 'Không có';
+      }
+      row.innerHTML = `
+      <td>${classInfo.id || ''}</td>
+      <td>${classInfo.name || ''}</td>
+      <td>${classInfo.teacherName || ''}</td>
+      <td>${studentCount}</td>
+      <td><button class="btn btn-info btn-sm" onclick="APP.showSessionsModal('${classInfo.id}')"><i class="fas fa-calendar-alt"></i> Quản lý</button></td>
+      <td>${actionButtons}</td>
+    `;
+    });
+  }
+
+  function renderStudentsList(studentsToRender) {
+    const tbody = document.getElementById('students-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const role = window.APP_DATA.userRole;
+    const students = studentsToRender || [];
+    const enrollments = window.APP_DATA.enrollments || [];
+    const classes = window.APP_DATA.classes || [];
+
+    // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+    const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+    // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+    const addStudentButton = document.querySelector('.btn-primary[onclick="APP.showAddStudentModal()"]');
+    if (addStudentButton) {
+      addStudentButton.style.display = (role === 'Admin' || role === 'LeTan') ? 'inline-flex' : 'none';
+    }
+    if (students.length === 0) {
+      const searchInput = document.getElementById('student-search-input');
+      if (searchInput && searchInput.value) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center">Không tìm thấy học viên nào khớp với từ khóa.</td></tr>';
+      } else {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center">Gõ vào ô tìm kiếm ở trên để tìm học viên.</td></tr>';
+      }
+      return;
+    }
+    students.forEach(student => {
+      const enrollmentsForStudent = enrollments.filter(e => e.studentId === student.id);
+      const classNames = enrollmentsForStudent.map(enrollment => {
+        const classInfo = classes.find(c => c.id === enrollment.classId);
+
+        // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+        if (classInfo) {
+          const courseDetails = courseMap.get(classInfo.courseId);
+          return courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.courseId;
+        }
+        return null;
+        // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+      }).filter(Boolean).join(', ');
+
+      let actionButtons = '';
+      if (role === 'Admin' || role === 'LeTan') {
+        actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showEditStudentModal('${student.id}')" title="Sửa" style="margin-right: 5px;"><i class="fas fa-edit"></i></button>`;
+      }
+      if (role === 'Admin') {
+        actionButtons += `<button class="btn btn-danger btn-sm" onclick="APP.deactivateStudent('${student.id}')" title="Cho nghỉ học"><i class="fas fa-user-slash"></i></button>`;
+      }
+      if (actionButtons === '') {
+        actionButtons = 'Không có';
+      }
+
+      const row = tbody.insertRow();
+      row.innerHTML = `
+          <td>${student.id}</td>
+          <td><span class="clickable-name" onclick="APP.showStudentProfile('${student.id}')">${student.name}</span></td>
+          <td>${student.dob || ''}</td>
+          <td>${student.parentName || ''}</td>
+          <td>${student.phone || ''}</td>
+          <td>${classNames || 'Chưa ghi danh'}</td>
+          <td>${actionButtons}</td>`;
+    });
+  }
+
+  function renderTeachersList() {
+    const tbody = document.getElementById('teachers-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const teachers = window.APP_DATA.teachers || [];
+
+    if (teachers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center">Không có dữ liệu giáo viên.</td></tr>';
+      return;
+    }
+
+    teachers.forEach(teacher => {
+      const row = tbody.insertRow();
+      const actionButtons = `
+            <button class="btn btn-secondary btn-sm" onclick="APP.showEditTeacherModal('${teacher.id}')" title="Sửa" style="margin-right: 5px;"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-danger btn-sm" onclick="APP.deleteTeacher('${teacher.id}')" title="Xóa"><i class="fas fa-trash"></i></button>
+        `;
+      row.innerHTML = `
+            <td>${teacher.id}</td>
+            <td>${teacher.name}</td>
+            <td>${teacher.phone || ''}</td>
+            <td>${teacher.email || ''}</td>
+            <td>${teacher.specialization || ''}</td>
+            <td>${teacher.status || ''}</td>
+            <td>${actionButtons}</td>
+        `;
+    });
+  }
+
+  function renderAttendancePage() {
+    const dateSelect = document.getElementById('attendance-date-select');
+    if (!dateSelect) return;
+    dateSelect.value = new Date().toISOString().slice(0, 10);
+    APP.renderSessionsForDate();
+  }
+
+  function renderTeacherSchedulePage() {
+    const teacherSelect = document.getElementById('tkb-teacher-select');
+    if (!teacherSelect) return;
+
+    const role = window.APP_DATA.userRole;
+    const userEmail = window.APP_DATA.userEmail;
+    const teachers = window.APP_DATA.teachers || [];
+
+    if (role === 'GiaoVien') {
+      const teacherInfo = teachers.find(t => t.email === userEmail);
+      const teacherName = teacherInfo ? teacherInfo.name : userEmail;
+      teacherSelect.innerHTML = `<option value="${teacherName}">${teacherName}</option>`;
+      teacherSelect.disabled = true;
+    } else {
+      teacherSelect.innerHTML = '<option value="">-- Tất cả giáo viên --</option>' + teachers.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+      teacherSelect.disabled = false;
+    }
+
+    APP.renderTeacherSchedule();
+  }
+
+  function renderFeeManagementPage() {
+    const tbody = document.getElementById('fee-management-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const { students, enrollments, classes, transactions, feeTypes, userRole } = window.APP_DATA;
+    if (!students || students.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center">Không có dữ liệu học viên.</td></tr>';
+      return;
+    }
+    students.forEach(student => {
+      const studentEnrollments = enrollments.filter(e => e.studentId === student.id);
+      const classNames = studentEnrollments.map(e => {
+        const classInfo = classes.find(c => c.id === e.classId);
+        return classInfo ? classInfo.name : 'N/A';
+      }).join(', ');
+      const totalDue = studentEnrollments.reduce((sum, enrollment) => {
+        const feeType = (feeTypes || []).find(f => f.id === enrollment.feeTypeId);
+        return sum + Number(feeType ? feeType.amount : 0);
+      }, 0);
+      const studentTransactions = (transactions || []).filter(t => t.studentId === student.id);
+      const totalPaid = studentTransactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+      const remaining = totalDue - totalPaid;
+      let actionButtons = '';
+      if (userRole === 'Admin' || userRole === 'LeTan') {
+        actionButtons += `<button class="btn btn-primary btn-sm" onclick="APP.showAddTransactionModal('${student.id}')" style="margin-right: 5px;"><i class="fas fa-plus"></i> Thêm TT</button>`;
+      }
+      actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showTransactionHistoryModal('${student.id}')"><i class="fas fa-history"></i> Xem LS</button>`;
+      const row = tbody.insertRow();
+      row.innerHTML = `
+            <td>${student.id}</td>
+            <td><span class="clickable-name" onclick="APP.showStudentProfile('${student.id}')">${student.name}</span></td>
+            <td>${classNames || 'Chưa ghi danh'}</td>
+            <td style="font-weight: bold;">${totalDue.toLocaleString('vi-VN')} đ</td>
+            <td style="color: green;">${totalPaid.toLocaleString('vi-VN')} đ</td>
+            <td style="color: ${remaining > 0 ? 'red' : 'inherit'}; font-weight: bold;">${remaining.toLocaleString('vi-VN')} đ</td>
+            <td>${actionButtons}</td>
+        `;
+    });
+  }
+
+  function renderExpensesList() {
+    showLoading();
+    google.script.run
+      .withSuccessHandler(response => {
+        hideLoading();
+        if (response.success) {
+          window.APP_DATA.expenses = response.data; // Luu lai danh sach chi phi
+          const expenses = window.APP_DATA.expenses;
+          const tbody = document.getElementById('expenses-table-body');
+          const userRole = window.APP_DATA.userRole;
+          tbody.innerHTML = '';
+
+          if (expenses.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Chưa có khoản chi nào.</td></tr>';
+            return;
+          }
+          expenses.forEach(item => {
+            const row = tbody.insertRow();
+            let actionButtons = `<button class="btn btn-secondary btn-sm" onclick="APP.showEditExpenseModal('${item.id}')" title="Sửa"><i class="fas fa-edit"></i></button>`;
+            if (userRole === 'Admin') {
+              actionButtons += ` <button class="btn btn-danger btn-sm" onclick="APP.deleteExpense('${item.id}')" title="Xóa"><i class="fas fa-trash"></i></button>`;
+            }
+
+            row.innerHTML = `
+            <td>${item.id}</td>
+            <td>${item.date}</td>
+            <td style="font-weight: bold;">${item.amount.toLocaleString('vi-VN')} đ</td>
+            <td>${item.category}</td>
+            <td>${item.description}</td>
+            <td>${item.payer}</td>
+            <td>${actionButtons}</td> 
+          `;
+          });
+        } else {
+          handleError(response.error);
+        }
+      })
+      .withFailureHandler(e => {
+        hideLoading();
+        handleError(e);
+      })
+      .getExpenses();
+  }
+
+  function renderSettingsPage() {
+    const config = window.APP_DATA.config || {};
+    const listsToRender = ['TenKhoaHoc', 'LoaiChiPhi', 'NguoiChi', 'NguoiThu', 'HinhThucTT'];
+
+    listsToRender.forEach(listName => {
+      const listContainer = document.getElementById(`list-${listName}`);
+      if (listContainer) {
+        const items = config[listName] || [];
+        listContainer.innerHTML = '';
+        if (items.length === 0) {
+          listContainer.innerHTML = '<li style="justify-content:center; color:#6c757d;">Chưa có mục nào.</li>';
+        } else {
+          items.forEach(item => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+            <span>${item}</span>
+            <button class="delete-item-btn" onclick="APP.deleteConfigItem('${listName}', '${item}')" title="Xóa">
+              <i class="fas fa-times"></i>
+            </button>
+          `;
+            listContainer.appendChild(li);
+          });
+        }
+      }
+    });
+  }
+
+  function renderFeeTypesList() {
+    const feeTypes = window.APP_DATA.feeTypes || [];
+    const tbody = document.getElementById('fee-types-table-body');
+    const userRole = window.APP_DATA.userRole;
+    tbody.innerHTML = '';
+
+    if (feeTypes.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Chưa có loại học phí nào.</td></tr>';
+      return;
+    }
+
+    feeTypes.forEach(item => {
+      const row = tbody.insertRow();
+      let actionButtons = '';
+      if (userRole === 'Admin' || userRole === 'LeTan') {
+        actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showEditFeeTypeModal('${item.id}')" title="Sửa"><i class="fas fa-edit"></i></button>`;
+      }
+      if (userRole === 'Admin') {
+        actionButtons += ` <button class="btn btn-danger btn-sm" onclick="APP.deleteFeeType('${item.id}')" title="Xóa"><i class="fas fa-trash"></i></button>`;
+      }
+
+      row.innerHTML = `
+      <td>${item.id}</td>
+      <td>${item.name}</td>
+      <td style="font-weight: bold;">${Number(item.amount).toLocaleString('vi-VN')} đ</td>
+      <td>${item.note || ''}</td>
+      <td>${actionButtons}</td> 
+    `;
+    });
+  }
+
+  function renderCoursesList() {
+    const tbody = document.getElementById('courses-table-body');
+    if (!tbody) return;
+
+    const courses = window.APP_DATA.courses || [];
+    const userRole = window.APP_DATA.userRole;
+    tbody.innerHTML = '';
+
+    const addButton = document.querySelector('.btn-primary[onclick="APP.showAddCourseModal()"]');
+    if (addButton) {
+      addButton.style.display = (userRole === 'Admin' || userRole === 'LeTan') ? 'inline-flex' : 'none';
+    }
+
+    if (courses.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center">Chưa có khóa học nào. Vui lòng thêm khóa học mới.</td></tr>';
+      return;
+    }
+
+    courses.forEach(course => {
+      let actionButtons = '';
+      if (userRole === 'Admin' || userRole === 'LeTan') {
+        actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showEditCourseModal('${course.id}')" title="Sửa"><i class="fas fa-edit"></i></button>`;
+      }
+      if (userRole === 'Admin') {
+        actionButtons += ` <button class="btn btn-danger btn-sm" onclick="APP.deleteCourse('${course.id}')" title="Xóa"><i class="fas fa-trash"></i></button>`;
+      }
+
+      const row = tbody.insertRow();
+      row.innerHTML = `
+      <td>${course.id}</td>
+      <td>${course.programName || ''}</td>
+      <td>${course.level || ''}</td>
+      <td>${course.description || ''}</td>
+      <td style="font-weight: bold;">${Number(course.fee || 0).toLocaleString('vi-VN')} đ</td>
+      <td>${actionButtons}</td>
+    `;
+    });
+  }
+  // --- KẾT THÚC KHỐI RENDER ---
+
+  function initializeApp() {
+    loadInitialData();
+    initializeNavigation();
+  }
+
+  function loadInitialData() {
+    showLoading();
+    // Ham nay gio chi lay thong tin nguoi dung va config
+    google.script.run
+      .withSuccessHandler(function (response) {
+        if (response && response.success) {
+          window.APP_DATA = response.data;
+          updateUIForRole();
+
+          let startingPage = 'Dashboard'; // Mặc định là Dashboard cho Admin, Lễ tân...
+          if (window.APP_DATA.userRole === 'GiaoVien') {
+            startingPage = 'ThoiKhoaBieu'; // Nếu là Giáo viên, bắt đầu ở Thời Khóa Biểu
+          }
+
+          // Đặt trạng thái "active" cho đúng mục menu trên sidebar
+          document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+          const startingNav = document.querySelector(`.nav-item[data-page="${startingPage}"]`);
+          if (startingNav) {
+            startingNav.classList.add('active');
+          }
+
+          // Tải trang bắt đầu đã được xác định
+          loadPage(startingPage, true);
+        } else {
+          hideLoading();
+          handleError(response.error || 'Không thể tải dữ liệu');
+        }
+      })
+      .withFailureHandler(function (error) {
+        hideLoading();
+        handleError(error);
+      })
+      .getInitialData();
+  }
+
+  function initializeNavigation() {
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', function (e) {
+        e.preventDefault();
+        const page = this.dataset.page;
+        if (this.classList.contains('active')) return;
+        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+        this.classList.add('active');
+        loadPage(page);
+      });
+    });
+  }
+
+  function loadPage(pageName, isInitialLoad = false) {
+    if (pageName && !isInitialLoad) { window.APP.lastMainPage = pageName; }
+    showLoading();
+
+    const proceedToRender = () => {
+      google.script.run.withSuccessHandler(html => {
+        document.getElementById('page-container').innerHTML = html;
+
+        if (pageName === 'Dashboard') renderDashboard();
+        else if (pageName === 'QuanLyKhoaHoc') renderCoursesList();
+        else if (pageName === 'QuanLyLopHoc') { APP.renderClassesList(); }
+        else if (pageName === 'QuanLyHocVien') { APP.fetchAndRenderStudents(); }
+        else if (pageName === 'QuanLyGiaoVien') renderTeachersList();
+        else if (pageName === 'BangLuong') {
+          const teacherSelect = document.getElementById('payroll-teacher-select');
+          teacherSelect.innerHTML = '<option value="">-- Chọn giáo viên --</option>' + (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+          const today = new Date();
+          const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+          document.getElementById('payroll-start-date').value = startOfMonth;
+          document.getElementById('payroll-end-date').value = today.toISOString().slice(0, 10);
+        }
+        else if (pageName === 'DiemDanh') renderAttendancePage();
+        else if (pageName === 'ThoiKhoaBieu') renderTeacherSchedulePage();
+        else if (pageName === 'QuanLyLoaiHocPhi') { renderFeeTypesList(); }
+        else if (pageName === 'HocPhi') renderFeeManagementPage();
+        else if (pageName === 'QuanLyChiPhi') { renderExpensesList(); }
+        else if (pageName === 'Settings') { renderSettingsPage(); }
+        else if (pageName === 'BaoCao') {
+          const today = new Date().toISOString().slice(0, 10);
+          const startOfMonth = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
+          document.getElementById('report-start-date').value = startOfMonth;
+          document.getElementById('report-end-date').value = today;
+          const classSelect = document.getElementById('attendance-report-class');
+          classSelect.innerHTML = '<option value="">-- Vui lòng chọn lớp --</option>' + (window.APP_DATA.classes || []).map(c => `<option value="${c.id}">${c.name} - ${c.id}</option>`).join('');
+          document.getElementById('attendance-report-start-date').value = startOfMonth;
+          document.getElementById('attendance-report-end-date').value = today;
+        }
+
+        hideLoading();
+      }).withFailureHandler(e => { hideLoading(); handleError(e); }).include(pageName);
+    };
+
+    // --- LOGIC TẢI LƯỜI NÂNG CẤP ---
+    const dataNeeds = {
+      core: ['QuanLyKhoaHoc', 'QuanLyLopHoc', 'QuanLyHocVien', 'QuanLyGiaoVien', 'QuanLyLoaiHocPhi', 'ThoiKhoaBieu', 'HocPhi', 'BangLuong', 'DiemDanh', 'BaoCao'],
+      sessions: ['DiemDanh', 'ThoiKhoaBieu', 'BangLuong', 'QuanLyLopHoc'], // <-- THÊM VÀO ĐÂY
+      transactions: ['HocPhi']
+    };
+
+    const needsCore = dataNeeds.core.includes(pageName) && !window.APP_DATA.classes;
+    const needsSessions = dataNeeds.sessions.includes(pageName) && !window.APP_DATA.sessions;
+    const needsTransactions = dataNeeds.transactions.includes(pageName) && !window.APP_DATA.transactions;
+
+    const fetcher = (backendFunction, callback) => {
+      google.script.run.withSuccessHandler(r => {
+        if (r.success) {
+          Object.assign(window.APP_DATA, r.data);
+          callback();
+        } else { hideLoading(); handleError(r.error); }
+      }).withFailureHandler(e => { hideLoading(); handleError(e); })[backendFunction]();
+    };
+
+    // Nối chuỗi các lần tải dữ liệu
+    if (needsCore) {
+      fetcher('getCoreData', () => {
+        if (needsSessions) {
+          fetcher('getSessionsData', () => {
+            if (needsTransactions) {
+              fetcher('getTransactionsData', proceedToRender);
+            } else {
+              proceedToRender();
+            }
+          });
+        } else if (needsTransactions) {
+          fetcher('getTransactionsData', proceedToRender);
+        } else {
+          proceedToRender();
+        }
+      });
+    } else if (needsSessions) {
+      fetcher('getSessionsData', () => {
+        if (needsTransactions) {
+          fetcher('getTransactionsData', proceedToRender);
+        } else {
+          proceedToRender();
+        }
+      });
+    } else if (needsTransactions) {
+      fetcher('getTransactionsData', proceedToRender);
+    } else {
+      proceedToRender();
+    }
+  }
+
+  function showLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'flex';
+  }
+  function hideLoading() {
+    const loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'none';
+  }
+  function handleError(error, functionName = 'Unknown') {
+    console.error(`Lỗi trong hàm ${functionName}:`, error);
+    const errorContainer = document.getElementById('error-container');
+    const errorText = document.getElementById('error-text');
+    if (errorContainer && errorText) {
+      errorText.textContent = `Lỗi: ${error.toString()}`;
+      errorContainer.style.display = 'flex';
+    }
+  }
+  function hideError() {
+    const errorContainer = document.getElementById('error-container');
+    if (errorContainer) {
+      errorContainer.style.display = 'none';
+    }
+  }
+  function showModal(title, content) {
+    const container = document.getElementById('modal-container');
+    const titleEl = document.getElementById('modal-title');
+    const bodyEl = document.getElementById('modal-body');
+    if (container && titleEl && bodyEl) {
+      titleEl.innerHTML = title;
+      bodyEl.innerHTML = content;
+      container.style.display = 'flex';
+    } else {
+      console.error('Lỗi: Không tìm thấy các thành phần của Modal. Hãy kiểm tra file Modals.html.');
+    }
+  }
+  function closeModal() {
+    const container = document.getElementById('modal-container');
+    if (container) container.style.display = 'none';
+  }
+
+  function updateUIForRole() {
+    const role = window.APP_DATA.userRole;
+    if (!role) return;
+    const navItems = {
+      'QuanLyKhoaHoc': ['Admin', 'LeTan'], // <-- THÊM DÒNG NÀY
+      'Dashboard': ['Admin', 'LeTan'],
+      'BaoCao': ['Admin', 'LeTan'],
+      'QuanLyLopHoc': ['Admin', 'LeTan'],
+      'QuanLyHocVien': ['Admin', 'LeTan'],
+      'QuanLyGiaoVien': ['Admin'],
+      'BangLuong': ['Admin'],
+      'DiemDanh': ['Admin', 'GiaoVien'],
+      'ThoiKhoaBieu': ['Admin', 'GiaoVien', 'LeTan'],
+      'QuanLyLoaiHocPhi': ['Admin', 'LeTan'], // Them dong nay
+      'HocPhi': ['Admin', 'LeTan'],
+      'QuanLyChiPhi': ['Admin', 'LeTan'],
+      'Settings': ['Admin']
+    };
+    for (const page in navItems) {
+      const element = document.querySelector(`.nav-item[data-page="${page}"]`);
+      if (element) {
+        element.style.display = navItems[page].includes(role) ? 'flex' : 'none';
+      }
+    }
+  }
+
+  // --- APP OBJECT ---
+  window.APP = {
+    lastMainPage: 'Dashboard',
+    currentSessionId: null,
+    studentPage: {
+      currentPage: 1,
+      searchTerm: ''
+    },
+    capitalizeWords: function (str) {
+      if (!str) return '';
+      return str.toLowerCase().split(' ').map(word =>
+        word.charAt(0).toUpperCase() + word.slice(1)
+      ).join(' ');
+    },
+    handleSuccess: function (message) {
+      const successDiv = document.createElement('div');
+      successDiv.className = 'success-message';
+      successDiv.innerHTML = `<i class="fas fa-check-circle"></i> <span>${message}</span>`;
+      document.body.appendChild(successDiv);
+      setTimeout(() => { successDiv.remove(); }, 3000);
+    },
+
+    refreshDataAndReloadPage: function () {
+      // Xoa du lieu da luu trong cache cua trinh duyet
+      delete window.APP_DATA.classes;
+      delete window.APP_DATA.students;
+      delete window.APP_DATA.enrollments;
+      delete window.APP_DATA.sessions;
+      delete window.APP_DATA.teachers;
+      delete window.APP_DATA.feeTypes;
+      delete window.APP_DATA.expenses;
+      delete window.APP_DATA.transactions;
+
+      // Tai lai trang hien tai de lay du lieu moi
+      const currentPage = window.APP.lastMainPage || 'Dashboard';
+      loadPage(currentPage);
+    },
+
+    // *** THEM HAM MOI VAO DAY ***
+    showConfirmationModal: function (message, onConfirmCallback) {
+      const modalContent = `
+          <div class="confirm-modal-content">
+              <div class="confirm-modal-icon">
+                  <i class="fas fa-exclamation-triangle"></i>
+              </div>
+              <h4>Bạn chắc chắn?</h4>
+              <p>${message}</p>
+              <div class="confirm-modal-footer">
+                  <button id="confirm-cancel-btn" class="btn btn-secondary" style="min-width: 100px;">Hủy bỏ</button>
+                  <button id="confirm-ok-btn" class="btn btn-danger" style="min-width: 100px;">Đồng ý</button>
+              </div>
+          </div>
+      `;
+      showModal('Xác nhận hành động', modalContent);
+
+      // Gan su kien cho cac nut bam
+      document.getElementById('confirm-ok-btn').onclick = function () {
+        closeModal();
+        onConfirmCallback(); // Goi ham xu ly khi nguoi dung dong y
+      };
+      document.getElementById('confirm-cancel-btn').onclick = function () {
+        closeModal();
+      };
+    },
+
+    // --- Course Functions ---
+    showAddCourseModal: function () {
+      const modalContent = `<form onsubmit="APP.addCourse(event)">
+        <div class="form-group">
+          <label>Mã Khóa Học (Duy nhất, không dấu, không khoảng trắng, VD: IE-6.5)</label>
+          <input type="text" class="form-control" name="courseId" required>
+        </div>
+        <div class="form-group">
+          <label>Tên Chương Trình (VD: IELTS, Cambridge YL)</label>
+          <input type="text" class="form-control" name="programName" required>
+        </div>
+        <div class="form-group">
+          <label>Cấp Độ/Khối (VD: 6.5, Flyers, Lớp 7)</label>
+          <input type="text" class="form-control" name="level">
+        </div>
+        <div class="form-group">
+          <label>Mô Tả</label>
+          <input type="text" class="form-control" name="description">
+        </div>
+        <div class="form-group">
+          <label>Học Phí Chuẩn (VNĐ)</label>
+          <input type="number" class="form-control" name="fee" min="0">
+        </div>
+        <div class="form-group text-right">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button>
+        </div>
+    </form>`;
+      showModal('Thêm Khóa Học Mới', modalContent);
+    },
+
+    addCourse: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // Tải lại để cập nhật danh sách
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addCourse(data);
+    },
+
+    showEditCourseModal: function (courseId) {
+      const course = (window.APP_DATA.courses || []).find(c => c.id === courseId);
+      if (!course) {
+        handleError("Không tìm thấy dữ liệu khóa học.");
+        return;
+      }
+      const modalContent = `<form onsubmit="APP.editCourse(event)">
+        <div class="form-group">
+          <label>Mã Khóa Học</label>
+          <input type="text" class="form-control" name="courseId" value="${course.id}" readonly>
+        </div>
+        <div class="form-group">
+          <label>Tên Chương Trình</label>
+          <input type="text" class="form-control" name="programName" value="${course.programName || ''}" required>
+        </div>
+        <div class="form-group">
+          <label>Cấp Độ/Khối</label>
+          <input type="text" class="form-control" name="level" value="${course.level || ''}">
+        </div>
+        <div class="form-group">
+          <label>Mô Tả</label>
+          <input type="text" class="form-control" name="description" value="${course.description || ''}">
+        </div>
+        <div class="form-group">
+          <label>Học Phí Chuẩn (VNĐ)</label>
+          <input type="number" class="form-control" name="fee" value="${course.fee || 0}" min="0">
+        </div>
+        <div class="form-group text-right">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button>
+        </div>
+    </form>`;
+      showModal(`Sửa Khóa Học: ${course.id}`, modalContent);
+    },
+
+    editCourse: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .editCourse(data);
+    },
+
+    deleteCourse: function (courseId) {
+      const message = `Bạn có chắc chắn muốn xóa khóa học "${courseId}"? Hành động này không thể hoàn tác và chỉ thành công nếu không có lớp học nào đang sử dụng khóa học này.`
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteCourse(courseId);
+      });
+    },
+
+    // --- Class Functions ---
+    showAddClassModal: function () {
+      // Lấy danh sách Khóa học và Giáo viên từ dữ liệu đã tải
+      const courses = window.APP_DATA.courses || [];
+      if (courses.length === 0) {
+        alert("Bạn cần tạo Khóa học trước khi thêm Lớp học. Vui lòng vào trang 'Quản Lý Khóa Học'.");
+        return;
+      }
+      const courseOptions = courses.map(c => `<option value="${c.id}">${c.id} (${c.programName} - ${c.level})</option>`).join('');
+      const teacherOptions = (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+
+      // Form HTML hoàn toàn mới
+      const modalContent = `<form onsubmit="APP.addClass(event)">
+        <div class="form-group">
+            <label>Chọn Khóa Học Gốc</label>
+            <select class="form-control" name="courseId" required>
+                <option value="">-- Chọn một khóa học --</option>
+                ${courseOptions}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Giáo Viên Phụ Trách</label>
+            <select class="form-control" name="teacherId">
+                <option value="">-- Chọn giáo viên --</option>
+                ${teacherOptions}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Ngày Khai Giảng (Quan trọng để tạo mã lớp)</label>
+            <input type="date" class="form-control" name="startDate" required>
+        </div>
+        <div class="form-group">
+            <label>Lịch Học (VD: T2-T4-T6)</label>
+            <input type="text" class="form-control" name="lichHoc" placeholder="Nhập các ngày học trong tuần">
+        </div>
+        <div class="form-group">
+            <label>Giờ Học (VD: 18:00 - 19:30)</label>
+            <input type="text" class="form-control" name="gioHoc" placeholder="Nhập khung giờ học">
+        </div>
+        <div class="form-group">
+            <label>Sĩ Số Tối Đa</label>
+            <input type="number" class="form-control" name="maxSize" placeholder="Bỏ trống nếu không giới hạn" min="0">
+        </div>
+        <div class="form-group text-right">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Tạo Lớp Học</button>
+        </div>
+    </form>`;
+      showModal('Tạo Lớp Học Mới', modalContent);
+    },
+    addClass: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addClass(data);
+    },
+    showEditClassModal: function (classId) {
+      const cls = (window.APP_DATA.classes || []).find(c => c.id === classId);
+      if (!cls) { handleError("Không tìm thấy thông tin lớp học."); return; }
+
+      const course = (window.APP_DATA.courses || []).find(c => c.id === cls.courseId);
+      const teacherOptions = (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}" ${t.id === cls.teacherId ? 'selected' : ''}>${t.name}</option>`).join('');
+
+      // Trong form Sửa, chúng ta không cho phép thay đổi Khóa học gốc để đảm bảo tính nhất quán của mã
+      const modalContent = `<form onsubmit="APP.editClass(event)">
+        <input type="hidden" name="id" value="${cls.id}">
+        <div class="form-group">
+          <label>Mã Lớp Học (Không thể thay đổi)</label>
+          <input type="text" class="form-control" value="${cls.id}" disabled>
+        </div>
+        <div class="form-group">
+          <label>Thuộc Khóa Học (Không thể thay đổi)</label>
+          <input type="text" class="form-control" name="courseId" value="${cls.courseId}" readonly>
+        </div>
+        <div class="form-group">
+          <label>Giáo Viên Phụ Trách</label>
+          <select class="form-control" name="teacherId"><option value="">-- Chọn giáo viên --</option>${teacherOptions}</select>
+        </div>
+        <div class="form-group"><label>Lịch Học (VD: T2-T4-T6)</label><input type="text" class="form-control" name="lichHoc" value="${cls.lichHoc || ''}"></div>
+        <div class="form-group"><label>Giờ Học (VD: 18:00 - 19:30)</label><input type="text" class="form-control" name="gioHoc" value="${cls.gioHoc || ''}"></div>
+        <div class="form-group"><label>Sĩ Số Tối Đa</label><input type="number" class="form-control" name="maxSize" value="${cls.maxSize || ''}" min="0"></div>
+        <div class="form-group text-right">
+            <button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button>
+        </div>
+    </form>`;
+      showModal(`Sửa Thông Tin Lớp: ${cls.id}`, modalContent);
+    },
+    editClass: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+        })
+        .editClass(data);
+    },
+    deleteClass: function (classId) {
+      const message = 'Bạn có chắc muốn xóa lớp học này? Lớp chỉ có thể bị xóa khi không có học viên và không có buổi học nào.';
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteClass(classId);
+      });
+    },
+    renderClassesList: function () {
+      const tbody = document.getElementById('classes-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      const role = window.APP_DATA.userRole;
+      const classes = window.APP_DATA.classes || [];
+      const enrollments = window.APP_DATA.enrollments || [];
+      // Tạo một map để tra cứu thông tin khóa học từ CourseID cho nhanh
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+
+      const addClassButton = document.querySelector('.btn-primary[onclick="APP.showAddClassModal()"]');
+      if (addClassButton) {
+        addClassButton.style.display = (role === 'Admin' || role === 'LeTan') ? 'inline-flex' : 'none';
+      }
+      if (classes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center">Chưa có lớp học nào.</td></tr>';
+        return;
+      }
+      classes.forEach(classInfo => {
+        const studentCount = enrollments.filter(e => e.classId === classInfo.id).length;
+        const courseDetails = courseMap.get(classInfo.courseId);
+        // Tên lớp học giờ sẽ là sự kết hợp từ thông tin khóa học gốc
+        const courseDisplayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.courseId;
+
+        let actionButtons = '';
+        if (role === 'Admin' || role === 'LeTan') {
+          actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showEditClassModal('${classInfo.id}')" title="Sửa" style="margin-right: 5px;"><i class="fas fa-edit"></i></button>`;
+        }
+        if (role === 'Admin') {
+          actionButtons += `<button class="btn btn-danger btn-sm" onclick="APP.deleteClass('${classInfo.id}')" title="Xóa"><i class="fas fa-trash"></i></button>`;
+        }
+
+        const row = tbody.insertRow();
+        row.innerHTML = `
+          <td>${classInfo.id || ''}</td>
+          <td>${courseDisplayName}</td>
+          <td>${classInfo.teacherName || 'Chưa có'}</td>
+          <td>${studentCount}${classInfo.maxSize > 0 ? ' / ' + classInfo.maxSize : ''}</td>
+          <td><button class="btn btn-info btn-sm" onclick="APP.showSessionsModal('${classInfo.id}')"><i class="fas fa-calendar-alt"></i> Quản lý Buổi học</button></td>
+          <td>${actionButtons}</td>
+        `;
+      });
+    },
+    // --- Session Functions ---
+    // THAY THE TOAN BO HAM CU bang phien ban nang cap nay
+    showSessionsModal: function (classId) {
+      // Gia co lai code de tranh loi
+      const classes = window.APP_DATA.classes || [];
+      const cls = classes.find(c => c.id === classId);
+      if (!cls) {
+        handleError("Lỗi: Không tìm thấy thông tin lớp học để hiển thị buổi học.");
+        return;
+      }
+
+      const sessionsForClass = (window.APP_DATA.sessions || []).filter(s => s.classId === classId)
+        .sort((a, b) => new Date(a.date + 'T' + a.startTime) - new Date(b.date + 'T' + b.startTime));
+
+      let sessionsHtml = sessionsForClass.map(s => `
+        <tr>
+            <td><input type="checkbox" class="session-checkbox" value="${s.id}"></td>
+            <td>${s.date}</td>
+            <td>${s.startTime} - ${s.endTime}</td>
+            <td>${s.teacher || ''}</td>
+            <td>
+                <button class="btn btn-secondary btn-sm" onclick="APP.showEditSessionModal('${s.id}')"><i class="fas fa-edit"></i></button>
+                <button class="btn btn-danger btn-sm" onclick="APP.deleteSession('${s.id}')"><i class="fas fa-trash"></i></button>
+            </td>
+        </tr>
+    `).join('');
+
+      if (sessionsForClass.length === 0) {
+        sessionsHtml = `<tr><td colspan="5" style="text-align:center;">Chưa có buổi học nào được lên lịch.</td></tr>`;
+      }
+
+      const modalContent = `
+        <div class="page-header" style="margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="margin: 0;">Lịch học của lớp</h4>
+            <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-danger" onclick="APP.deleteSelectedSessions('${classId}')"><i class="fas fa-trash-alt"></i> Xóa Đã Chọn</button>
+                <button class="btn btn-info" onclick="APP.showRecurringSessionsModal('${classId}')"><i class="fas fa-cogs"></i> Tạo Lịch Hàng Loạt</button>
+                <button class="btn btn-primary" onclick="APP.showAddSessionModal('${classId}')"><i class="fas fa-plus"></i> Thêm Buổi học</button>
+            </div>
+        </div>
+        
+        <div class="form-group" style="margin-bottom: 1rem;"><input type="text" id="session-filter-input" class="form-control" onkeyup="APP.filterSessionsInModal()" placeholder="Lọc theo ngày, giờ hoặc giáo viên..."></div>
+        
+        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th style="width: 20px;"><input type="checkbox" onchange="APP.toggleAllSessionCheckboxes(this)"></th>
+                    <th>Ngày</th><th>Thời gian</th><th>Giáo viên</th><th>Thao tác</th>
+                </tr></thead>
+                <tbody id="sessions-table-modal-body">${sessionsHtml}</tbody>
+            </table>
+        </div>
+    `;
+      showModal(`Quản lý Buổi học: ${cls.name}`, modalContent);
+    },
+    // THAY THE TOAN BO HAM CU bang phien ban nay
+    toggleAllSessionCheckboxes: function (headerCheckbox) {
+      const isChecked = headerCheckbox.checked;
+      document.querySelectorAll('#sessions-table-modal-body tr').forEach(row => {
+        // Chi tac dong len nhung hang dang hien thi
+        if (row.style.display !== 'none') {
+          const cb = row.querySelector('.session-checkbox');
+          if (cb) {
+            cb.checked = isChecked;
+          }
+        }
+      });
+    },
+    showAddSessionModal: function (classId) {
+      // Thay doi o day: value la t.id
+      const teacherOptions = (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+      const modalContent = `<form onsubmit="APP.addSession(event)">
+        <input type="hidden" name="classId" value="${classId}">
+        <div class="form-group"><label>Ngày học</label><input type="date" class="form-control" name="date" required></div>
+        <div class="form-group"><label>Thời gian bắt đầu</label><input type="time" class="form-control" name="startTime" required></div>
+        <div class="form-group"><label>Thời gian kết thúc</label><input type="time" class="form-control" name="endTime" required></div>
+        <div class="form-group"><label>Giáo viên phụ trách</label><select class="form-control" name="teacherId"><option value="">-- Chọn giáo viên --</option>${teacherOptions}</select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="APP.showSessionsModal('${classId}')">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button></div>
+    </form>`;
+      showModal('Thêm Buổi Học Mới', modalContent);
+    },
+    addSession: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      const classIdForModal = data.classId; // Luu lai classId
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            // Tai lai du lieu va tu dong mo lai modal Buoi hoc
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addSession(data);
+    },
+    showEditSessionModal: function (sessionId) {
+      const session = window.APP_DATA.sessions.find(s => s.id === sessionId);
+      if (!session) { handleError("Không tìm thấy buổi học"); return; }
+
+      // Thay doi o day: value la t.id, so sanh voi session.teacherId
+      const teacherOptions = (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}" ${t.id === session.teacherId ? 'selected' : ''}>${t.name}</option>`).join('');
+      const modalContent = `<form onsubmit="APP.editSession(event)">
+        <input type="hidden" name="id" value="${session.id}">
+        <input type="hidden" name="classId" value="${session.classId}">
+        <div class="form-group"><label>Ngày học</label><input type="date" class="form-control" name="date" value="${session.date}" required></div>
+        <div class="form-group"><label>Thời gian bắt đầu</label><input type="time" class="form-control" name="startTime" value="${session.startTime}" required></div>
+        <div class="form-group"><label>Thời gian kết thúc</label><input type="time" class="form-control" name="endTime" value="${session.endTime}" required></div>
+        <div class="form-group"><label>Giáo viên phụ trách</label><select class="form-control" name="teacherId"><option value="">-- Chọn giáo viên --</option>${teacherOptions}</select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="APP.showSessionsModal('${session.classId}')">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button></div>
+    </form>`;
+      showModal('Chỉnh Sửa Buổi Học', modalContent);
+    },
+    editSession: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .editSession(data);
+    },
+    deleteSession: function (sessionId) {
+      const session = window.APP_DATA.sessions.find(s => s.id === sessionId);
+      if (!session) { handleError("Không tìm thấy buổi học"); return; }
+
+      const message = 'Bạn có chắc muốn xóa buổi học này?';
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              closeModal();
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteSession(sessionId);
+      });
+    },
+
+    // PHIEN BAN DUNG VA DAY DU
+    showRecurringSessionsModal: function (classId) {
+      // Thay doi o day: value la t.id
+      const teacherOptions = (window.APP_DATA.teachers || []).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+      const modalContent = `<form onsubmit="APP.createRecurringSessions(event)">
+        <input type="hidden" name="classId" value="${classId}">
+        <div class="form-group">
+            <label>Chọn các ngày trong tuần</label>
+            <div class="weekdays-selector">
+                <input type="checkbox" id="day-1" name="weekdays" value="1"><label for="day-1">T2</label>
+                <input type="checkbox" id="day-2" name="weekdays" value="2"><label for="day-2">T3</label>
+                <input type="checkbox" id="day-3" name="weekdays" value="3"><label for="day-3">T4</label>
+                <input type="checkbox" id="day-4" name="weekdays" value="4"><label for="day-4">T5</label>
+                <input type="checkbox" id="day-5" name="weekdays" value="5"><label for="day-5">T6</label>
+                <input type="checkbox" id="day-6" name="weekdays" value="6"><label for="day-6">T7</label>
+                <input type="checkbox" id="day-0" name="weekdays" value="0"><label for="day-0">CN</label>
+            </div>
+        </div>
+        <div class="form-group"><label>Thời gian bắt đầu</label><input type="time" class="form-control" name="startTime" required></div>
+        <div class="form-group"><label>Thời gian kết thúc</label><input type="time" class="form-control" name="endTime" required></div>
+        <div class="form-group"><label>Áp dụng từ ngày</label><input type="date" class="form-control" name="startDate" required></div>
+        <div class="form-group"><label>Đến hết ngày</label><input type="date" class="form-control" name="endDate" required></div>
+        <div class="form-group"><label>Giáo viên phụ trách</label><select class="form-control" name="teacherId"><option value="">-- Chọn giáo viên --</option>${teacherOptions}</select></div>
+        <div class="form-group text-right">
+            <button type="button" class="btn btn-secondary" onclick="APP.showSessionsModal('${classId}')">Hủy</button>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-cogs"></i> Tạo Lịch</button>
+        </div>
+    </form>`;
+      showModal('Tạo Lịch Học Hàng Loạt', modalContent);
+    },
+    // THAY THE TOAN BO HAM CU bang phien ban co luong xu ly tot hon
+    createRecurringSessions: function (event) {
+      event.preventDefault();
+      const form = event.target;
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData.entries());
+      data.weekdays = formData.getAll('weekdays');
+
+      if (data.weekdays.length === 0) {
+        alert('Vui lòng chọn ít nhất một ngày trong tuần.');
+        return;
+      }
+      if (new Date(data.endDate) < new Date(data.startDate)) {
+        alert('Ngày kết thúc không được nhỏ hơn ngày bắt đầu.');
+        return;
+      }
+
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading(); // Dat len dau de luon an loading
+          if (r.success) {
+            // --- PHAN THAY DOI LOGIC NAM O DAY ---
+            closeModal(); // 1. Dong cua so "Tao Lich" hien tai
+            APP.handleSuccess(r.message); // 2. Hien thi thong bao thanh cong
+            APP.refreshDataAndReloadPage(); // 3. Tu dong tai lai du lieu & trang
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .createRecurringSessions(data);
+    },
+
+    deleteSelectedSessions: function (classId) {
+      const selectedIds = Array.from(document.querySelectorAll('.session-checkbox:checked')).map(cb => cb.value);
+      if (selectedIds.length === 0) {
+        alert("Vui lòng chọn ít nhất một buổi học để xóa.");
+        return;
+      }
+
+      const message = `Bạn có chắc muốn xóa ${selectedIds.length} buổi học đã chọn? Thao tác này không thể hoàn tác.`;
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading(); // <-- Chuyển lên đầu
+            if (r.success) {
+              closeModal(); // <-- Thêm đóng modal
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteMultipleSessions(selectedIds);
+      });
+    },
+
+    // --- Student Functions ---
+    showAddStudentModal: function () {
+      const feeTypeOptions = '<option value="">-- Chọn loại phí --</option>' +
+        (window.APP_DATA.feeTypes || []).map(ft => `<option value="${ft.id}">${ft.name} - ${Number(ft.amount).toLocaleString('vi-VN')}đ</option>`).join('');
+
+      // Logic hien thi danh sach lop da duoc don gian hoa
+      const classCheckboxes = (window.APP_DATA.classes || []).map(c => {
+        const currentSize = (window.APP_DATA.enrollments || []).filter(e => e.classId === c.id).length;
+        const maxSize = c.maxSize || 0;
+        const isFull = maxSize > 0 && currentSize >= maxSize;
+
+        // Ten lop (c.name) bay gio da bao gom ca lich hoc
+        // Vi du: "IELTS (T2-T4 | 18:00 - 20:15)"
+        let label = `${c.name} - GV: ${c.teacherName || 'Chưa có'}`;
+        label += ` [Sĩ số: ${currentSize}${maxSize > 0 ? '/' + maxSize : ''}]`;
+        if (isFull) label += ` (Đã đầy)`;
+
+        return `
+        <div class="form-check-group ${isFull ? 'disabled' : ''}">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="classIds" value="${c.id}" id="add_class_${c.id}" ${isFull ? 'disabled' : ''} onchange="document.getElementById('fee_type_for_add_${c.id}').disabled = !this.checked">
+                <label class="form-check-label" for="add_class_${c.id}">${label}</label>
+            </div>
+            <select name="feeTypeId_for_${c.id}" id="fee_type_for_add_${c.id}" class="form-control form-control-sm" disabled>
+                ${feeTypeOptions}
+            </select>
+        </div>
+        `;
+      }).join('');
+
+      const modalContent = `<form onsubmit="APP.addStudent(event)"><div class="form-group"><label>Họ và Tên Học Viên</label><input type="text" class="form-control" name="name" required oninput="this.value = APP.capitalizeWords(this.value)"></div><div class="form-group"><label>Ngày Sinh</label><input type="date" class="form-control" name="dob" required></div><div class="form-group"><label>Tên Phụ Huynh</label><input type="text" class="form-control" name="parentName" oninput="this.value = APP.capitalizeWords(this.value)"></div><div class="form-group"><label>Số Điện Thoại</label><input type="tel" class="form-control" name="phone"></div><div class="form-group"><label>Ghi danh vào các lớp</label><div class="checkbox-container">${classCheckboxes || 'Không có lớp học nào để chọn.'}</div></div><div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button></div></form>`;
+      showModal('Thêm Học Viên Mới', modalContent);
+    },
+    addStudent: function (event) {
+      event.preventDefault();
+      const form = event.target;
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData);
+      const selectedClassIds = formData.getAll('classIds');
+      data.enrollments = selectedClassIds.map(classId => {
+        const feeSelect = form.querySelector(`select[name="feeTypeId_for_${classId}"]`);
+        return { classId: classId, feeTypeId: feeSelect ? feeSelect.value : '' };
+      });
+      delete data.classIds;
+      showLoading();
+      google.script.run.withSuccessHandler(r => { hideLoading(); if (r.success) { closeModal(); APP.handleSuccess(r.message); APP.refreshDataAndReloadPage(); } else { handleError(r.error); } }).withFailureHandler(e => { hideLoading(); handleError(e); }).addStudent(data);
+    },
+    showEditStudentModal: function (studentId) {
+      const student = window.APP_DATA.students.find(s => s.id === studentId);
+      if (!student) { handleError('Không tìm thấy thông tin học viên.'); return; }
+
+      // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+      // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+      const currentClassIds = (window.APP_DATA.enrollments || []).filter(e => e.studentId === studentId).map(e => e.classId);
+
+      const classCheckboxes = (window.APP_DATA.classes || []).map(c => {
+        const currentSize = (window.APP_DATA.enrollments || []).filter(e => e.classId === c.id).length;
+        const maxSize = c.maxSize || 0;
+        const isEnrolled = currentClassIds.includes(c.id);
+        const isFull = maxSize > 0 && currentSize >= maxSize;
+
+        // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+        const courseDetails = courseMap.get(c.courseId);
+        const courseDisplayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : c.courseId;
+
+        let label = `${courseDisplayName} - GV: ${c.teacherName || 'Chưa có'}`;
+        // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+        label += ` [Sĩ số: ${currentSize}${maxSize > 0 ? '/' + maxSize : ''}]`;
+        if (isFull && !isEnrolled) label += ` (Đã đầy)`;
+
+        const enrollment = isEnrolled ? (window.APP_DATA.enrollments || []).find(e => e.studentId === studentId && e.classId === c.id) : null;
+        const selectedFeeTypeId = enrollment ? enrollment.feeTypeId : '';
+        const feeTypeOptions = '<option value="">-- Chọn loại phí --</option>' +
+          (window.APP_DATA.feeTypes || []).map(ft => `<option value="${ft.id}" ${ft.id === selectedFeeTypeId ? 'selected' : ''}>${ft.name} - ${Number(ft.amount).toLocaleString('vi-VN')}đ</option>`).join('');
+
+        return `
+        <div class="form-check-group ${isFull && !isEnrolled ? 'disabled' : ''}">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="classIds" value="${c.id}" id="edit_class_${c.id}" ${isEnrolled ? 'checked' : ''} ${isFull && !isEnrolled ? 'disabled' : ''} onchange="document.getElementById('fee_type_for_edit_${c.id}').disabled = !this.checked">
+                <label class="form-check-label" for="edit_class_${c.id}">${label}</label>
+            </div>
+            <select name="feeTypeId_for_${c.id}" id="fee_type_for_edit_${c.id}" class="form-control form-control-sm" ${!isEnrolled ? 'disabled' : ''}>${feeTypeOptions}</select>
+        </div>`;
+      }).join('');
+
+      const modalContent = `<form onsubmit="APP.editStudent(event)"><input type="hidden" name="id" value="${student.id}"><div class="form-group"><label>Mã Học Viên</label><input type="text" class="form-control" value="${student.id}" disabled></div><div class="form-group"><label>Họ và Tên</label><input type="text" class="form-control" name="name" value="${student.name || ''}" required oninput="this.value = APP.capitalizeWords(this.value)"></div><div class="form-group"><label>Ngày Sinh</label><input type="date" class="form-control" name="dob" value="${student.dob || ''}" required></div><div class="form-group"><label>Tên Phụ Huynh</label><input type="text" class="form-control" name="parentName" value="${student.parentName || ''}" oninput="this.value = APP.capitalizeWords(this.value)"></div><div class="form-group"><label>Số Điện Thoại</label><input type="tel" class="form-control" name="phone" value="${student.phone || ''}"></div><div class="form-group"><label>Các Lớp Đã Ghi Danh</label><div class="checkbox-container">${classCheckboxes || 'Không có lớp học nào để chọn.'}</div></div><div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button></div></form>`;
+      showModal(`Sửa Thông Tin: ${student.name}`, modalContent);
+    },
+    editStudent: function (event) {
+      event.preventDefault();
+      const form = event.target;
+      const formData = new FormData(form);
+      const data = Object.fromEntries(formData.entries());
+      const selectedClassIds = formData.getAll('classIds');
+      data.enrollments = selectedClassIds.map(classId => {
+        const feeSelect = form.querySelector(`select[name="feeTypeId_for_${classId}"]`);
+        return { classId: classId, feeTypeId: feeSelect ? feeSelect.value : '' };
+      });
+      delete data.classIds;
+      showLoading();
+      google.script.run.withSuccessHandler(r => { hideLoading(); if (r.success) { closeModal(); APP.handleSuccess(r.message); APP.refreshDataAndReloadPage(); } else { handleError(r.error); } }).withFailureHandler(e => { hideLoading(); handleError(e); }).editStudent(data);
+    },
+    deactivateStudent: function (studentId) {
+      const message = 'Bạn có chắc muốn cho học viên này nghỉ học? Học viên sẽ bị ẩn khỏi các danh sách chính nhưng toàn bộ lịch sử học tập và giao dịch sẽ được giữ lại.';
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              // Tai lai du lieu va trang de cap nhat danh sach
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deactivateStudent(studentId); // Goi den ham moi o backend
+      });
+    },
+    fetchAndRenderStudents: function () {
+      showLoading();
+      const options = {
+        searchTerm: APP.studentPage.searchTerm,
+        page: APP.studentPage.currentPage,
+        pageSize: 50
+      };
+      google.script.run
+        .withSuccessHandler(response => {
+          hideLoading();
+          if (response.success) {
+            const pageData = response.data;
+            renderStudentsList(pageData.studentsOnPage);
+            APP.renderPagination(pageData.pagination);
+          } else {
+            handleError(response.error);
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+        })
+        .getStudentsPage(options);
+    },
+    renderPagination: function (pagination) {
+      const container = document.getElementById('pagination-container');
+      if (!container) return;
+      container.innerHTML = '';
+      const { currentPage, totalPages, totalItems } = pagination;
+      if (totalPages <= 1) return;
+      let paginationHtml = `<div style="margin-right: 20px;">Tổng số: <b>${totalItems}</b> học viên</div>`;
+      paginationHtml += `<button class="btn btn-secondary btn-sm" ${currentPage === 1 ? 'disabled' : ''} onclick="APP.changeStudentPage(${currentPage - 1})">Trước</button>`;
+      for (let i = 1; i <= totalPages; i++) {
+        paginationHtml += `<button class="btn ${i === currentPage ? 'btn-primary' : 'btn-secondary'} btn-sm" style="margin: 0 5px;" onclick="APP.changeStudentPage(${i})">${i}</button>`;
+      }
+      paginationHtml += `<button class="btn btn-secondary btn-sm" ${currentPage === totalPages ? 'disabled' : ''} onclick="APP.changeStudentPage(${currentPage + 1})">Sau</button>`;
+      container.innerHTML = paginationHtml;
+    },
+    changeStudentPage: function (newPage) {
+      if (newPage < 1 || newPage > 9999) return;
+      APP.studentPage.currentPage = newPage;
+      APP.fetchAndRenderStudents();
+    },
+    handleStudentSearch: function (inputElement) {
+      clearTimeout(window.searchTimeout);
+      window.searchTimeout = setTimeout(() => {
+        APP.studentPage.searchTerm = inputElement.value;
+        APP.studentPage.currentPage = 1;
+        APP.fetchAndRenderStudents();
+      }, 300);
+    },
+
+    // --- Student Profile Functions ---
+    showStudentProfile: function (studentId) {
+      showLoading();
+      google.script.run
+        .withSuccessHandler(html => {
+          document.getElementById('page-container').innerHTML = html;
+          google.script.run
+            .withSuccessHandler(response => {
+              hideLoading();
+              if (response.success) {
+                const profile = response.data;
+                document.getElementById('profile-student-name').textContent = `${profile.details.name} (${profile.details.id})`;
+                document.getElementById('profile-student-id').textContent = profile.details.id;
+                document.getElementById('profile-student-dob').textContent = profile.details.dob;
+                document.getElementById('profile-student-parent').textContent = profile.details.parentName;
+                document.getElementById('profile-student-phone').textContent = profile.details.phone;
+                const enrollmentsBody = document.getElementById('profile-enrollments-body');
+                enrollmentsBody.innerHTML = profile.enrollments.map(e => `<tr><td>${e.className}</td><td>${e.enrollmentDate}</td><td>${e.feeTypeName} (${e.feeAmount.toLocaleString('vi-VN')}đ)</td></tr>`).join('') || `<tr><td colspan="3" style="text-align:center;">Chưa ghi danh lớp nào.</td></tr>`;
+                const transactionsBody = document.getElementById('profile-transactions-body');
+                transactionsBody.innerHTML = profile.transactions.map(t => `<tr><td>${t.date}</td><td>${t.amount.toLocaleString('vi-VN')}</td><td>${t.content}</td><td>${t.method}</td></tr>`).join('') || `<tr><td colspan="4" style="text-align:center;">Chưa có giao dịch nào.</td></tr>`;
+                const attendanceBody = document.getElementById('profile-attendance-body');
+                attendanceBody.innerHTML = profile.attendance.map(a => `<tr><td>${a.date}</td><td>${a.className}</td><td>${a.status}</td><td>${a.note}</td></tr>`).join('') || `<tr><td colspan="4" style="text-align:center;">Chưa có dữ liệu điểm danh.</td></tr>`;
+              } else { handleError(response.error); }
+            })
+            .getStudentProfile(studentId);
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .include('StudentProfile');
+    },
+    goBackToMainPage: function () {
+      const lastPage = window.APP.lastMainPage || 'Dashboard';
+      const navItem = document.querySelector(`.nav-item[data-page="${lastPage}"]`);
+      if (navItem) {
+        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+        navItem.classList.add('active');
+      }
+      loadPage(lastPage, true);
+    },
+
+    // --- Attendance Functions ---
+    renderSessionsForDate: function () {
+      const dateSelect = document.getElementById('attendance-date-select');
+      const sessionsContainer = document.getElementById('sessions-list-container');
+      const attendanceContainer = document.getElementById('attendance-taking-container');
+      if (!dateSelect || !sessionsContainer || !attendanceContainer) return;
+
+      attendanceContainer.style.display = 'none';
+      const selectedDate = dateSelect.value;
+      if (!selectedDate) {
+        sessionsContainer.innerHTML = '<div class="placeholder-text">Vui lòng chọn một ngày để xem các buổi học đã lên lịch.</div>';
+        return;
+      }
+
+      const sessionsOnDate = (window.APP_DATA.sessions || [])
+        .filter(s => s.date === selectedDate)
+        .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+      if (sessionsOnDate.length === 0) {
+        sessionsContainer.innerHTML = '<div class="placeholder-text">Không có buổi học nào được lên lịch cho ngày này.</div>';
+        return;
+      }
+
+      // Tao map de tra cuu ten khoa hoc
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+
+      let sessionsHtml = '<h4>Các buổi học trong ngày:</h4>';
+      sessionsOnDate.forEach(session => {
+        const classInfo = window.APP_DATA.classes.find(c => c.id === session.classId);
+
+        let displayName = 'Lớp không xác định';
+        if (classInfo) {
+          const courseDetails = courseMap.get(classInfo.courseId);
+          displayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.id;
+        }
+
+        sessionsHtml += `
+            <button class="session-button" onclick="APP.loadAttendanceForSession('${session.id}')">
+                <span class="session-class-name">${displayName}</span>
+                <span class="session-time">${session.startTime} - ${session.endTime}</span>
+                <span class="session-teacher">${session.teacher ? ('GV: ' + session.teacher) : ''}</span>
+            </button>
+        `;
+      });
+      sessionsContainer.innerHTML = sessionsHtml;
+    },
+
+    loadAttendanceForSession: function (sessionId) {
+      APP.currentSessionId = sessionId;
+      showLoading();
+
+      const session = window.APP_DATA.sessions.find(s => s.id === sessionId);
+      const classInfo = window.APP_DATA.classes.find(c => c.id === session.classId);
+      if (!session || !classInfo) {
+        hideLoading();
+        handleError("Không tìm thấy thông tin buổi học.");
+        return;
+      }
+
+      // Tao map de tra cuu ten khoa hoc
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+      const courseDetails = courseMap.get(classInfo.courseId);
+      const displayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.id;
+
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            const attendanceData = r.data;
+            const studentsInClass = (window.APP_DATA.enrollments || [])
+              .filter(e => e.classId === session.classId)
+              .map(e => (window.APP_DATA.students || []).find(s => s.id === e.studentId))
+              .filter(Boolean);
+
+            const tbody = document.getElementById('attendance-table-body');
+            const titleEl = document.getElementById('attendance-session-title');
+            const container = document.getElementById('attendance-taking-container');
+
+            titleEl.textContent = `Điểm danh: ${displayName} (${session.startTime} - ${session.endTime})`;
+
+            if (studentsInClass.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="4" style="text-align: center">Lớp này chưa có học viên.</td></tr>';
+            } else {
+              tbody.innerHTML = '';
+              studentsInClass.forEach(student => {
+                const record = attendanceData.find(a => a.studentId === student.id);
+                const status = record ? record.status : 'present';
+                const note = record ? record.note : '';
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                            <td>${student.id}</td>
+                            <td>${student.name}</td>
+                            <td>
+                                <select class="form-control attendance-status" data-student-id="${student.id}">
+                                    <option value="present" ${status === 'present' ? 'selected' : ''}>Có mặt</option>
+                                    <option value="absent" ${status === 'absent' ? 'selected' : ''}>Vắng</option>
+                                    <option value="excused" ${status === 'late' || status === 'excused' ? 'selected' : ''}>Vắng có phép</option>
+                                </select>
+                            </td>
+                            <td><input type="text" class="form-control attendance-note" data-student-id="${student.id}" value="${note}"></td>
+                        `;
+              });
+            }
+            container.style.display = 'block';
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+        })
+        .getAttendanceForSession(sessionId);
+    },
+    saveAttendance: function () {
+      const sessionId = APP.currentSessionId;
+      if (!sessionId) {
+        handleError('Vui lòng chọn một buổi học để điểm danh.');
+        return;
+      }
+
+      const attendanceData = [];
+      document.querySelectorAll('.attendance-status').forEach(select => {
+        const studentId = select.dataset.studentId;
+        const noteInput = document.querySelector(`.attendance-note[data-student-id="${studentId}"]`);
+        attendanceData.push({
+          studentId: studentId,
+          status: select.value,
+          note: noteInput ? noteInput.value : ''
+        });
+      });
+
+      if (attendanceData.length === 0) {
+        APP.handleSuccess("Không có học viên trong lớp để điểm danh.");
+        return;
+      }
+
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            APP.handleSuccess(r.message);
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .saveAttendanceForSession(sessionId, attendanceData);
+    },
+
+    // --- Teacher Schedule Functions ---
+    renderTeacherSchedule: function () {
+      const teacherSelect = document.getElementById('tkb-teacher-select');
+      const rangeSelect = document.getElementById('tkb-range-select');
+      const container = document.getElementById('tkb-container');
+      if (!teacherSelect || !rangeSelect || !container) return;
+
+      // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+      // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+      const selectedTeacher = teacherSelect.value;
+      const selectedRange = rangeSelect.value;
+
+      const today = new Date();
+      let startDate, endDate;
+      const dayOfWeek = today.getDay();
+
+      switch (selectedRange) {
+        case 'next-week':
+          startDate = new Date(today);
+          startDate.setDate(today.getDate() - dayOfWeek + 8);
+          endDate = new Date(startDate);
+          endDate.setDate(startDate.getDate() + 6);
+          break;
+        case 'this-month':
+          startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+          endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+          break;
+        case 'this-week':
+        default:
+          startDate = new Date(today);
+          startDate.setDate(today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1));
+          endDate = new Date(startDate);
+          endDate.setDate(startDate.getDate() + 6);
+          break;
+      }
+
+      let filteredSessions = (window.APP_DATA.sessions || []);
+      if (selectedTeacher) {
+        filteredSessions = filteredSessions.filter(s => {
+          const classInfo = window.APP_DATA.classes.find(c => c.id === s.classId);
+          return s.teacher === selectedTeacher || (classInfo && classInfo.teacherName === selectedTeacher && !s.teacher);
+        });
+      }
+
+      filteredSessions = filteredSessions.filter(s => {
+        const sessionDate = new Date(s.date);
+        sessionDate.setHours(0, 0, 0, 0);
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+        return sessionDate >= startDate && sessionDate <= endDate;
+      }).sort((a, b) => new Date(a.date + 'T' + a.startTime) - new Date(b.date + 'T' + b.startTime));
+
+      if (filteredSessions.length === 0) {
+        container.innerHTML = `<div class="placeholder-text">Không có lịch dạy trong khoảng thời gian đã chọn.</div>`;
+        return;
+      }
+
+      const groupedByDate = filteredSessions.reduce((acc, session) => {
+        (acc[session.date] = acc[session.date] || []).push(session);
+        return acc;
+      }, {});
+
+      const weekdaysViet = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+      let html = '';
+      for (const date in groupedByDate) {
+        const dateParts = date.split('-');
+        const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+        const dayName = weekdaysViet[dateObj.getDay()];
+        const formattedDate = `${dayName}, ${date.split('-').reverse().join('/')}`;
+        html += `<div class="schedule-day-group"><h4>${formattedDate}</h4>`;
+
+        groupedByDate[date].forEach(session => {
+          const classInfo = window.APP_DATA.classes.find(c => c.id === session.classId);
+          const teacherName = session.teacher || (classInfo ? classInfo.teacherName : 'N/A');
+
+          // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+          let courseDisplayName = 'N/A';
+          if (classInfo) {
+            const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+            const courseDetails = courseMap.get(classInfo.courseId);
+            courseDisplayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.courseId;
+          }
+          // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+          html += `
+                <div class="session-button" style="cursor: default;">
+                    <span class="session-time">${session.startTime} - ${session.endTime}</span>
+                    <span class="session-class-name">${courseDisplayName}</span>
+                    <span class="session-teacher">GV: ${teacherName}</span>
+                </div>
+            `;
+        });
+        html += `</div>`;
+      }
+      container.innerHTML = html;
+    },
+
+    // --- Financial & Report Functions ---
+    showAddTransactionModal: function (studentId) {
+      const student = window.APP_DATA.students.find(s => s.id === studentId);
+      if (!student) { handleError("Không tìm thấy học viên"); return; }
+
+      const studentEnrollments = window.APP_DATA.enrollments.filter(e => e.studentId === studentId);
+      if (studentEnrollments.length === 0) { alert("Học viên này chưa được ghi danh vào lớp nào."); return; }
+
+      // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+      const courseMap = new Map((window.APP_DATA.courses || []).map(c => [c.id, c]));
+      // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+      const enrollmentOptions = studentEnrollments.map(e => {
+        const classInfo = window.APP_DATA.classes.find(c => c.id === e.classId);
+
+        // --- BẮT ĐẦU PHẦN SỬA LỖI ---
+        let displayName = e.classId; // Giá trị mặc định nếu không tìm thấy
+        if (classInfo) {
+          const courseDetails = courseMap.get(classInfo.courseId);
+          displayName = courseDetails ? `${courseDetails.programName} - ${courseDetails.level}` : classInfo.courseId;
+        }
+        return `<option value="${e.id}">${displayName}</option>`;
+        // --- KẾT THÚC PHẦN SỬA LỖI ---
+
+      }).join('');
+
+      const config = window.APP_DATA.config || {};
+      const collectorOptions = (config.NguoiThu || ['Admin', 'Lễ tân']).map(c => `<option value="${c}">${c}</option>`).join('');
+      const methodOptions = (config.HinhThucTT || ['Tiền mặt', 'Chuyển khoản']).map(m => `<option value="${m}">${m}</option>`).join('');
+      const modalContent = `<form onsubmit="APP.addTransaction(event)">
+        <input type="hidden" name="studentId" value="${student.id}">
+        <div class="form-group"><label>Thanh toán cho lớp</label><select name="enrollmentId" class="form-control" required>${enrollmentOptions}</select></div>
+        <div class="form-group"><label>Số Tiền Đóng (VNĐ)</label><input type="number" class="form-control" name="amount" required min="1000"></div>
+        <div class="form-group"><label>Ngày Đóng</label><input type="date" class="form-control" name="date" required value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="form-group"><label>Nội dung</label><input type="text" class="form-control" name="content" placeholder="VD: Đóng HP đợt 1"></div>
+        <div class="form-group"><label>Người Thu</label><select class="form-control" name="collector">${collectorOptions}</select></div>
+        <div class="form-group"><label>Hình Thức TT</label><select class="form-control" name="method">${methodOptions}</select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Ghi nhận</button></div>
+    </form>`;
+      showModal(`Thêm Giao dịch cho: ${student.name}`, modalContent);
+    },
+    addTransaction: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading(); // <-- Chuyển lên đầu
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+          } else { handleError(r.error); }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addTransaction(data);
+    },
+    showTransactionHistoryModal: function (studentId) {
+      const student = window.APP_DATA.students.find(s => s.id === studentId);
+      if (!student) { handleError("Không tìm thấy học viên"); return; }
+
+      const studentTransactions = (window.APP_DATA.transactions || []).filter(t => t.studentId === studentId).sort((a, b) => new Date(b.date) - new Date(a.date));
+      let historyHtml;
+      if (studentTransactions.length === 0) {
+        historyHtml = `<div class="placeholder-text">Học viên này chưa có giao dịch nào.</div>`;
+      } else {
+        const rows = studentTransactions.map(t => {
+          const enrollment = window.APP_DATA.enrollments.find(e => e.id === t.enrollmentId);
+          const classInfo = enrollment ? window.APP_DATA.classes.find(c => c.id === enrollment.classId) : null;
+          return `<tr><td>${t.date}</td><td>${Number(t.amount).toLocaleString('vi-VN')}</td><td>${classInfo ? classInfo.name : 'N/A'}</td><td>${t.content}</td><td>${t.collector}</td><td>${t.method}</td></tr>`;
+        }).join('');
+        historyHtml = `<div class="table-responsive" style="max-height: 450px; overflow-y: auto;"><table class="data-table"><thead><tr><th>Ngày Đóng</th><th>Số Tiền (VNĐ)</th><th>Cho Lớp</th><th>Nội Dung</th><th>Người Thu</th><th>Hình Thức</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      }
+      showModal(`Lịch sử Giao dịch: ${student.name}`, historyHtml);
+    },
+    switchReportTab: function (tabElement, tabName) {
+      document.querySelectorAll('.report-tab-content').forEach(content => {
+        content.style.display = 'none';
+        content.classList.remove('active');
+      });
+      document.querySelectorAll('.tab-link').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById(tabName).style.display = 'block';
+      document.getElementById(tabName).classList.add('active');
+      tabElement.classList.add('active');
+    },
+    generateAttendanceReport: function () {
+      const classId = document.getElementById('attendance-report-class').value;
+      const startDate = document.getElementById('attendance-report-start-date').value;
+      const endDate = document.getElementById('attendance-report-end-date').value;
+      if (!classId) { alert('Vui lòng chọn một lớp học.'); return; }
+      if (!startDate || !endDate) { alert('Vui lòng chọn ngày bắt đầu và ngày kết thúc.'); return; }
+      if (new Date(startDate) > new Date(endDate)) { alert('Ngày bắt đầu không được lớn hơn ngày kết thúc.'); return; }
+      showLoading();
+      document.getElementById('attendance-report-results-container').style.display = 'none';
+      const options = { classId, startDate, endDate };
+      google.script.run
+        .withSuccessHandler(response => {
+          hideLoading();
+          if (response.success) {
+            const reportData = response.data;
+            const tbody = document.getElementById('attendance-report-body');
+            tbody.innerHTML = '';
+            if (reportData.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Không có dữ liệu điểm danh cho lớp trong khoảng thời gian này.</td></tr>';
+            } else {
+              reportData.forEach(item => {
+                const row = tbody.insertRow();
+                row.innerHTML = `<td>${item.studentId}</td><td>${item.studentName}</td><td style="color: green;">${item.attended}</td><td style="color: red;">${item.absent}</td><td style="font-weight: bold;">${item.total}</td><td><div style="font-weight: bold; text-align: center;">${item.rate}%</div><div style="background: #e9ecef; border-radius: 5px; overflow: hidden; height: 8px; margin-top: 5px;"><div style="width: ${item.rate}%; background: #28a745; height: 100%;"></div></div></td>`;
+              });
+            }
+            document.getElementById('attendance-report-results-container').style.display = 'block';
+          } else { handleError(response.error); }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .getAttendanceReport(options);
+    },
+    generateDebtReport: function () {
+      showLoading();
+      google.script.run
+        .withSuccessHandler(response => {
+          hideLoading();
+          if (response.success) {
+            const debtList = response.data;
+            const tbody = document.getElementById('debt-report-body');
+            tbody.innerHTML = '';
+            if (debtList.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Chúc mừng! Không có công nợ nào.</td></tr>';
+            } else {
+              debtList.forEach(item => {
+                const row = tbody.insertRow();
+                row.innerHTML = `<td>${item.studentId}</td><td>${item.studentName}</td><td>${item.phone || ''}</td><td style="font-weight: bold;">${item.totalDue.toLocaleString('vi-VN')} đ</td><td style="color: green;">${item.totalPaid.toLocaleString('vi-VN')} đ</td><td style="color: red; font-weight: bold;">${item.remaining.toLocaleString('vi-VN')} đ</td>`;
+              });
+            }
+          } else { handleError(response.error); }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .getDebtReport();
+    },
+    generateRevenueReport: function () {
+      const startDate = document.getElementById('report-start-date').value;
+      const endDate = document.getElementById('report-end-date').value;
+      if (!startDate || !endDate) { alert('Vui lòng chọn ngày bắt đầu và ngày kết thúc.'); return; }
+      if (new Date(startDate) > new Date(endDate)) { alert('Ngày bắt đầu không được lớn hơn ngày kết thúc.'); return; }
+      showLoading();
+      document.getElementById('report-results-container').style.display = 'none';
+      google.script.run
+        .withSuccessHandler(response => {
+          hideLoading();
+          if (response.success) {
+            const { totalRevenue, transactions } = response.data;
+            document.getElementById('report-total-revenue').textContent = totalRevenue.toLocaleString('vi-VN') + ' đ';
+            const tbody = document.getElementById('report-transactions-body');
+            tbody.innerHTML = '';
+            if (transactions.length === 0) {
+              tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Không có giao dịch nào trong khoảng thời gian này.</td></tr>';
+            } else {
+              transactions.forEach(t => {
+                const row = tbody.insertRow();
+                row.innerHTML = `<td>${t.date}</td><td>${t.studentId}</td><td>${t.studentName}</td><td>${t.amount.toLocaleString('vi-VN')}</td><td>${t.content}</td><td>${t.className}</td><td>${t.collector}</td><td>${t.method}</td>`;
+              });
+            }
+            document.getElementById('report-results-container').style.display = 'block';
+          } else { handleError(response.error); }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .getRevenueReport({ startDate: startDate, endDate: endDate });
+    },
+
+    // --- Teacher Functions ---
+    showAddTeacherModal: function () {
+      const modalContent = `<form onsubmit="APP.addTeacher(event)">
+        <div class="form-group"><label>Họ Tên</label><input type="text" class="form-control" name="name" required oninput="this.value = APP.capitalizeWords(this.value)"></div>
+        <div class="form-group"><label>Số Điện Thoại</label><input type="tel" class="form-control" name="phone"></div>
+        <div class="form-group"><label>Email</label><input type="email" class="form-control" name="email"></div>
+        <div class="form-group"><label>Mức lương (VNĐ/giờ)</label><input type="number" class="form-control" name="payRate" min="0"></div>
+        <div class="form-group"><label>Ngày Sinh</label><input type="date" class="form-control" name="dob"></div>
+        <div class="form-group"><label>Ngày vào làm</label><input type="date" class="form-control" name="startDate"></div>
+        <div class="form-group"><label>Chuyên môn</label><input type="text" class="form-control" name="specialization"></div>
+        <div class="form-group"><label>Trạng thái</label><select class="form-control" name="status"><option value="Active">Đang hoạt động</option><option value="Inactive">Tạm nghỉ</option></select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button></div>
+    </form>`;
+      showModal('Thêm Giáo Viên Mới', modalContent);
+    },
+    addTeacher: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addTeacher(data);
+    },
+    showEditTeacherModal: function (teacherId) {
+      const teacher = window.APP_DATA.teachers.find(t => t.id === teacherId);
+      if (!teacher) { handleError("Không tìm thấy giáo viên."); return; }
+      const modalContent = `<form onsubmit="APP.editTeacher(event)">
+        <input type="hidden" name="id" value="${teacher.id}">
+        <div class="form-group"><label>Mã GV</label><input type="text" class="form-control" value="${teacher.id}" disabled></div>
+        <div class="form-group"><label>Họ Tên</label><input type="text" class="form-control" name="name" value="${teacher.name}" required oninput="this.value = APP.capitalizeWords(this.value)"></div>
+        <div class="form-group"><label>Số Điện Thoại</label><input type="tel" class="form-control" name="phone" value="${teacher.phone || ''}"></div>
+        <div class="form-group"><label>Email</label><input type="email" class="form-control" name="email" value="${teacher.email || ''}"></div>
+        <div class="form-group"><label>Mức lương (VNĐ/giờ)</label><input type="number" class="form-control" name="payRate" value="${teacher.payRate || 0}" min="0"></div>
+        <div class="form-group"><label>Ngày Sinh</label><input type="date" class="form-control" name="dob" value="${teacher.dob || ''}"></div>
+        <div class="form-group"><label>Ngày vào làm</label><input type="date" class="form-control" name="startDate" value="${teacher.startDate || ''}"></div>
+        <div class="form-group"><label>Chuyên môn</label><input type="text" class="form-control" name="specialization" value="${teacher.specialization || ''}"></div>
+        <div class="form-group"><label>Trạng thái</label><select class="form-control" name="status">
+            <option value="Active" ${teacher.status === 'Active' ? 'selected' : ''}>Đang hoạt động</option>
+            <option value="Inactive" ${teacher.status === 'Inactive' ? 'selected' : ''}>Tạm nghỉ</option>
+        </select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button></div>
+    </form>`;
+      showModal(`Sửa thông tin: ${teacher.name}`, modalContent);
+    },
+    editTeacher: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .editTeacher(data);
+    },
+    deleteTeacher: function (teacherId) {
+      const message = 'Bạn có chắc muốn xóa giáo viên này?';
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteTeacher(teacherId);
+      });
+    },
+
+    calculatePayroll: function () {
+      const teacherId = document.getElementById('payroll-teacher-select').value;
+      const startDate = document.getElementById('payroll-start-date').value;
+      const endDate = document.getElementById('payroll-end-date').value;
+
+      if (!teacherId) { alert('Vui lòng chọn giáo viên.'); return; }
+      if (!startDate || !endDate) { alert('Vui lòng chọn khoảng thời gian.'); return; }
+
+      showLoading();
+      document.getElementById('payroll-results-container').style.display = 'none';
+      const options = { teacherId, startDate, endDate };
+
+      google.script.run
+        .withSuccessHandler(response => {
+          hideLoading();
+          if (response.success) {
+            const data = response.data;
+            document.getElementById('payroll-teacher-name').textContent = `Kết quả Bảng lương: ${data.teacherName}`;
+            document.getElementById('payroll-pay-rate').textContent = `${data.payRate.toLocaleString('vi-VN')} đ`;
+            document.getElementById('payroll-total-hours').textContent = data.totalHoursFormatted;
+            document.getElementById('payroll-total-salary').textContent = `${data.totalSalary.toLocaleString('vi-VN')} đ`;
+
+            const tbody = document.getElementById('payroll-details-body');
+            tbody.innerHTML = '';
+            if (data.details.length === 0) {
+              tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Không có buổi dạy nào trong kỳ.</td></tr>`;
+            } else {
+              data.details.forEach(s => {
+                const row = tbody.insertRow();
+                row.innerHTML = `<td>${s.date}</td><td>${s.className}</td><td>${s.startTime} - ${s.endTime}</td><td>${s.durationFormatted}</td>`;
+              });
+            }
+            document.getElementById('payroll-results-container').style.display = 'block';
+          } else {
+            handleError(response.error);
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+        })
+        .getTeacherPayroll(options);
+    },
+
+    showAddExpenseModal: function () {
+      const config = window.APP_DATA.config || {};
+      const categoryOptions = (config.LoaiChiPhi || []).map(item => `<option value="${item}">${item}</option>`).join('');
+      const payerOptions = (config.NguoiChi || []).map(item => `<option value="${item}">${item}</option>`).join('');
+
+      const modalContent = `<form onsubmit="APP.addExpense(event)">
+        <div class="form-group"><label>Ngày chi</label><input type="date" class="form-control" name="date" required value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="form-group"><label>Số tiền (VNĐ)</label><input type="number" class="form-control" name="amount" required min="1000"></div>
+        <div class="form-group"><label>Loại chi phí</label><select class="form-control" name="category" required><option value="">-- Chọn loại chi phí --</option>${categoryOptions}</select></div>
+        <div class="form-group"><label>Nội dung chi tiết</label><input type="text" class="form-control" name="description"></div>
+        <div class="form-group"><label>Người chi</label><select class="form-control" name="payer"><option value="">-- Chọn người chi --</option>${payerOptions}</select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button></div>
+    </form>`;
+      showModal('Thêm Khoản Chi Mới', modalContent);
+    },
+
+    addExpense: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addExpense(data);
+    },
+
+    showEditExpenseModal: function (expenseId) {
+      const expense = (window.APP_DATA.expenses || []).find(e => e.id === expenseId);
+      if (!expense) {
+        handleError("Không tìm thấy dữ liệu khoản chi.");
+        return;
+      }
+
+      const config = window.APP_DATA.config || {};
+      const categoryOptions = (config.LoaiChiPhi || []).map(item => `<option value="${item}" ${item === expense.category ? 'selected' : ''}>${item}</option>`).join('');
+      const payerOptions = (config.NguoiChi || []).map(item => `<option value="${item}" ${item === expense.payer ? 'selected' : ''}>${item}</option>`).join('');
+
+      // Chuyen doi ngay dd/MM/yyyy sang yyyy-MM-dd de hien thi tren form
+      const dateParts = expense.date.split('/');
+      const formattedDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+
+      const modalContent = `<form onsubmit="APP.editExpense(event)">
+        <input type="hidden" name="id" value="${expense.id}">
+        <div class="form-group"><label>Ngày chi</label><input type="date" class="form-control" name="date" required value="${formattedDate}"></div>
+        <div class="form-group"><label>Số tiền (VNĐ)</label><input type="number" class="form-control" name="amount" required min="1000" value="${expense.amount}"></div>
+        <div class="form-group"><label>Loại chi phí</label><select class="form-control" name="category" required><option value="">-- Chọn loại chi phí --</option>${categoryOptions}</select></div>
+        <div class="form-group"><label>Nội dung chi tiết</label><input type="text" class="form-control" name="description" value="${expense.description || ''}"></div>
+        <div class="form-group"><label>Người chi</label><select class="form-control" name="payer"><option value="">-- Chọn người chi --</option>${payerOptions}</select></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button></div>
+    </form>`;
+      showModal(`Sửa Khoản Chi: ${expense.id}`, modalContent);
+    },
+    editExpense: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage();
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .editExpense(data);
+    },
+    deleteExpense: function (expenseId) {
+      const message = "Bạn có chắc chắn muốn xóa khoản chi này? Thao tác này không thể hoàn tác."
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage();
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteExpense(expenseId);
+      });
+    },
+
+    addConfigItem: function (listName) {
+      const input = document.getElementById(`new-${listName}`);
+      const newItem = input.value;
+      if (!newItem || newItem.trim() === '') {
+        alert("Vui lòng nhập giá trị.");
+        return;
+      }
+
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading(); // <-- Chuyển lên đầu
+          if (r.success) {
+            input.value = ''; // Xóa input sau khi thêm thành công
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+        })
+        .addConfigItem(listName, newItem);
+    },
+
+    deleteConfigItem: function (listName, itemToDelete) {
+      const message = `Bạn có chắc muốn xóa mục "${itemToDelete}" không?`;
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading(); // <-- Chuyển lên đầu
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => {
+            hideLoading();
+            handleError(e);
+          })
+          .deleteConfigItem(listName, itemToDelete);
+      });
+    },
+
+    showAddFeeTypeModal: function () {
+      const modalContent = `<form onsubmit="APP.addFeeType(event)">
+        <div class="form-group"><label>Tên Loại Phí</label><input type="text" class="form-control" name="name" required></div>
+        <div class="form-group"><label>Số Tiền (VNĐ)</label><input type="number" class="form-control" name="amount" required min="0"></div>
+        <div class="form-group"><label>Ghi Chú</label><input type="text" class="form-control" name="note"></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Lưu</button></div>
+    </form>`;
+      showModal('Thêm Loại Học Phí Mới', modalContent);
+    },
+    addFeeType: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .addFeeType(data);
+    },
+    showEditFeeTypeModal: function (feeTypeId) {
+      const feeType = (window.APP_DATA.feeTypes || []).find(f => f.id === feeTypeId);
+      if (!feeType) {
+        handleError("Không tìm thấy dữ liệu loại học phí.");
+        return;
+      }
+      const modalContent = `<form onsubmit="APP.editFeeType(event)">
+        <input type="hidden" name="id" value="${feeType.id}">
+        <div class="form-group"><label>Tên Loại Phí</label><input type="text" class="form-control" name="name" required value="${feeType.name}"></div>
+        <div class="form-group"><label>Số Tiền (VNĐ)</label><input type="number" class="form-control" name="amount" required min="0" value="${feeType.amount}"></div>
+        <div class="form-group"><label>Ghi Chú</label><input type="text" class="form-control" name="note" value="${feeType.note || ''}"></div>
+        <div class="form-group text-right"><button type="button" class="btn btn-secondary" onclick="closeModal()">Hủy</button><button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Cập nhật</button></div>
+    </form>`;
+      showModal(`Sửa Loại Học Phí: ${feeType.name}`, modalContent);
+    },
+    editFeeType: function (event) {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target));
+      showLoading();
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            closeModal();
+            APP.handleSuccess(r.message);
+            APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+          } else {
+            handleError(r.error);
+          }
+        })
+        .withFailureHandler(e => { hideLoading(); handleError(e); })
+        .editFeeType(data);
+    },
+    deleteFeeType: function (feeTypeId) {
+      const message = "Bạn có chắc chắn muốn xóa loại học phí này?"
+      APP.showConfirmationModal(message, function () {
+        showLoading();
+        google.script.run
+          .withSuccessHandler(r => {
+            hideLoading();
+            if (r.success) {
+              APP.handleSuccess(r.message);
+              APP.refreshDataAndReloadPage(); // <-- Sửa ở đây
+            } else {
+              handleError(r.error);
+            }
+          })
+          .withFailureHandler(e => { hideLoading(); handleError(e); })
+          .deleteFeeType(feeTypeId);
+      });
+    },
+
+    filterSessionsInModal: function () {
+      const filterText = document.getElementById('session-filter-input').value.toLowerCase();
+      const tableBody = document.getElementById('sessions-table-modal-body');
+      const rows = tableBody.getElementsByTagName('tr');
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowText = row.textContent || row.innerText;
+        if (rowText.toLowerCase().indexOf(filterText) > -1) {
+          row.style.display = "";
+        } else {
+          row.style.display = "none";
+        }
+      }
+    },
+
+    requestGeminiAnalysis: function () {
+      showLoading();
+      const resultContainer = document.getElementById('gemini-analysis-result');
+      const contentContainer = document.getElementById('gemini-analysis-content');
+
+      // Hien thi khung ket qua va thong bao dang tai
+      resultContainer.style.display = 'block';
+      contentContainer.innerText = 'Gemini đang suy nghĩ...';
+
+      google.script.run
+        .withSuccessHandler(r => {
+          hideLoading();
+          if (r.success) {
+            // Hien thi ket qua phan tich
+            contentContainer.innerText = r.data;
+          } else {
+            contentContainer.innerText = 'Đã có lỗi xảy ra: ' + r.error;
+          }
+        })
+        .withFailureHandler(e => {
+          hideLoading();
+          handleError(e);
+          contentContainer.innerText = 'Lỗi kết nối đến server.';
+        })
+        .getGeminiAnalysis();
+    },
+  };
+
+  // --- GLOBAL EVENT LISTENERS ---
+  document.addEventListener('click', function (event) {
+    const container = document.getElementById('modal-container');
+    if (container && event.target === container) {
+      if (event.target.classList.contains('modal-container')) {
+        closeModal();
+      }
+    }
+  });
+  document.addEventListener('DOMContentLoaded', initializeApp);
+
+  function handleServerError(error) {
+    console.error('Server error:', error);
+    const errorMessage = error.message || 'Đã có lỗi xảy ra';
+    handleError(errorMessage);
+  }
+</script>

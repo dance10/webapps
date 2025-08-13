@@ -1,0 +1,129 @@
+<div class="page-content">
+  <div class="page-header">
+    <h2>Báo cáo và Thống kê</h2>
+  </div>
+
+  <div class="report-tabs">
+    <button class="tab-link active" onclick="APP.switchReportTab(this, 'revenue')">
+      <i class="fas fa-file-invoice-dollar"></i> Báo cáo Doanh thu
+    </button>
+    <button class="tab-link" onclick="APP.switchReportTab(this, 'debt'); APP.generateDebtReport();">
+      <i class="fas fa-exclamation-triangle"></i> Báo cáo Công nợ
+    </button>
+    <button class="tab-link" onclick="APP.switchReportTab(this, 'attendance')">
+      <i class="fas fa-clipboard-check"></i> Báo cáo Chuyên cần
+    </button>
+  </div>
+
+  <div id="revenue" class="report-tab-content active">
+    <div class="report-container">
+      <div class="report-filters">
+        <h4>Bộ lọc Doanh thu</h4>
+        <div class="form-group">
+          <label for="report-start-date">Từ ngày</label>
+          <input type="date" id="report-start-date" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="report-end-date">Đến ngày</label>
+          <input type="date" id="report-end-date" class="form-control">
+        </div>
+        <button class="btn btn-primary" onclick="APP.generateRevenueReport()">
+          <i class="fas fa-search"></i> Xem Báo cáo
+        </button>
+      </div>
+
+      <div id="report-results-container" class="report-results" style="display:none;">
+        <div class="report-summary">
+          <div class="summary-item">
+            <span>Tổng Doanh thu:</span>
+            <strong id="report-total-revenue">0 đ</strong>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Ngày GD</th>
+                <th>Mã HV</th>
+                <th>Tên Học Viên</th>
+                <th>Số Tiền</th>
+                <th>Nội Dung</th>
+                <th>Lớp</th>
+                <th>Người Thu</th>
+                <th>Hình Thức</th>
+              </tr>
+            </thead>
+            <tbody id="report-transactions-body">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="debt" class="report-tab-content">
+    <div id="debt-report-results-container">
+        <div class="table-responsive" style="max-height: 70vh;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Mã HV</th>
+                        <th>Họ Tên</th>
+                        <th>Điện Thoại</th>
+                        <th>Tổng Phí</th>
+                        <th>Đã Đóng</th>
+                        <th>Còn Lại</th>
+                    </tr>
+                </thead>
+                <tbody id="debt-report-body">
+                    <tr><td colspan="6" style="text-align:center;">Bấm nút "Báo cáo Công nợ" ở trên để tải dữ liệu.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+  </div>
+  
+  <div id="attendance" class="report-tab-content">
+    <div class="report-container">
+      <div class="report-filters">
+        <h4>Bộ lọc Chuyên cần</h4>
+        <div class="form-group">
+          <label for="attendance-report-class">Chọn lớp</label>
+          <select id="attendance-report-class" class="form-control">
+            <option value="">-- Vui lòng chọn lớp --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="attendance-report-start-date">Từ ngày</label>
+          <input type="date" id="attendance-report-start-date" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="attendance-report-end-date">Đến ngày</label>
+          <input type="date" id="attendance-report-end-date" class="form-control">
+        </div>
+        <button class="btn btn-primary" onclick="APP.generateAttendanceReport()">
+          <i class="fas fa-search"></i> Xem Báo cáo
+        </button>
+      </div>
+
+      <div id="attendance-report-results-container" class="report-results" style="display:none;">
+         <div class="table-responsive" style="max-height: 70vh;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Mã HV</th>
+                        <th>Họ Tên</th>
+                        <th>Số buổi có mặt</th>
+                        <th>Số buổi vắng</th>
+                        <th>Tổng số buổi</th>
+                        <th>Tỷ lệ chuyên cần</th>
+                    </tr>
+                </thead>
+                <tbody id="attendance-report-body"></tbody>
+            </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
