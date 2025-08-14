@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  
+  <div id="login-container">
+    <div class="login-box">
+      <div class="login-header">
+        <i class="fas fa-graduation-cap"></i>
+        <h2>Tiếng Anh Cô Thuý</h2>
+        <p>Vui lòng đăng nhập để tiếp tục</p>
+      </div>
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="username"><i class="fas fa-user"></i> Tên đăng nhập</label>
+          <input type="text" id="username" name="username" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="password"><i class="fas fa-lock"></i> Mật khẩu</label>
+          <input type="password" id="password" name="password" class="form-control" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Đăng Nhập</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="app-wrapper" style="display: none;">
+    <!-- Main application content will be loaded here -->
+  </div>
+  
+  <div id="loading" style="display: none;">
+    <div class="spinner"></div>
+    <span>Đang xử lý...</span>
+  </div>
+  
+  <div id="error-container" style="display: none;">
+    <div class="error-message">
+      <i class="fas fa-exclamation-circle"></i>
+      <span id="error-text"></span>
+      <button onclick="hideError()">Đóng</button>
+    </div>
+  </div>
+
+  <?!= include('Modals'); ?>
+  <?!= include('Scripts'); ?>
+</body>
+</html>

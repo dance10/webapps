@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; }
+    .container { width: 800px; margin: auto; border: 1px solid #ccc; padding: 20px; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .header h2 { margin: 0; }
+    .info-table, .fee-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    .info-table td { padding: 5px; }
+    .fee-table th, .fee-table td { border: 1px solid #000; padding: 8px; text-align: left; }
+    .fee-table th { background-color: #f2f2f2; }
+    .total-row td { font-weight: bold; }
+    .footer { margin-top: 40px; display: flex; justify-content: space-between; }
+    .footer-col { text-align: center; }
+    @media print {
+      body { margin: 0; }
+      .container { border: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>PHIẾU BÁO HỌC PHÍ</h2>
+      <p>Ngày báo phí: {{currentDate}}</p>
+    </div>
+    <table class="info-table">
+      <tr>
+        <td style="width: 50%;"><strong>Họ tên học viên:</strong> {{studentName}}</td>
+        <td style="width: 50%;"><strong>Mã học viên:</strong> {{studentId}}</td>
+      </tr>
+      <tr>
+        <td><strong>Phụ huynh:</strong> {{parentName}}</td>
+        <td><strong>Điện thoại:</strong> {{phone}}</td>
+      </tr>
+    </table>
+    <h4>CHI TIẾT CÁC KHOẢN PHÍ</h4>
+    <table class="fee-table">
+      <thead>
+        <tr>
+          <th>Nội dung</th>
+          <th>Số tiền (VNĐ)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{feeDetails}}
+      </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td>TỔNG CỘNG</td>
+          <td>{{totalDue}}</td>
+        </tr>
+        <tr class="total-row">
+          <td>ĐÃ THANH TOÁN</td>
+          <td>{{totalPaid}}</td>
+        </tr>
+        <tr class="total-row" style="background-color: #ffffcc;">
+          <td>SỐ TIỀN CẦN THANH TOÁN</td>
+          <td>{{remaining}}</td>
+        </tr>
+      </tfoot>
+    </table>
+    <p><i>Bằng chữ: {{remainingInWords}}</i></p>
+    <div class="footer">
+      <div class="footer-col">
+        <strong>Phụ huynh/Học viên</strong><br>
+        (Ký và ghi rõ họ tên)
+      </div>
+      <div class="footer-col">
+        <strong>Người lập phiếu</strong><br>
+        (Ký và ghi rõ họ tên)
+      </div>
+    </div>
+  </div>
+</body>
+</html>

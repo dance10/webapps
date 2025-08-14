@@ -23,36 +23,74 @@ const CONFIG = {
   TRANSACTION_ID_PREFIX: 'GD'
 };
 
+// ===============================================================
+// WEB APP SERVING
+// ===============================================================
+function doGet(e) {
+  return HtmlService.createTemplateFromFile('Login')
+    .evaluate()
+    .setTitle('Quản Lý Trung Tâm')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
 
-// Thêm ngay sau phần CONFIG và trước phần WEB APP SERVING
+// ===============================================================
+// AUTHENTICATION & INITIAL DATA
+// ===============================================================
+function login(credentials) {
+  const lock = getLock();
+  try {
+    const { username, password } = credentials; // Changed from email to username
+    if (!username || !password) {
+      throw new Error("Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.");
+    }
+
+    const usersSheet = getSheet(CONFIG.USERS_SHEET);
+    const usersData = usersSheet.getDataRange().getValues();
+    
+    // Compare username (column A) and password (column B)
+    const userRow = usersData.find(row => row[0].toLowerCase() === username.toLowerCase() && row[1].toString() === password.toString());
+
+    if (!userRow) {
+      return { success: false, error: "Sai tên đăng nhập hoặc mật khẩu. Vui lòng thử lại." };
+    }
+
+    const userRole = userRow[2]; // Column C for Role
+    const userEmail = userRow[0]; // Keep this for display purposes, it's the username now
+    const teacherId = userRow[3] || null; // Lấy Teacher ID từ cột D (index 3)
+
+    const config = getConfigData();
+
+    return {
+      success: true,
+      data: {
+        config,
+        userRole,
+        userEmail, // This variable now holds the username
+        teacherId // Thêm teacherId vào dữ liệu trả về
+      }
+    };
+
+  } catch (error) {
+    Logger.log("!!! LỖI trong hàm login: " + error.toString());
+    const analysis = getGeminiErrorAnalysis(error);
+    return { success: false, error: analysis };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // ===============================================================
 // VALIDATION FUNCTIONS
 // ===============================================================
 function validateFormData(data) {
     const errors = [];
-    
-    // Validate student data
-    if (data.name && data.name.trim() === '') {
-        errors.push('Tên không được để trống');
-    }
-    
-    // Validate session data
-    if (data.date && !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
-        errors.push('Định dạng ngày không hợp lệ');
-    }
-    
-    // Validate amount
-    if (data.amount && (isNaN(data.amount) || Number(data.amount) <= 0)) {
-        errors.push('Số tiền không hợp lệ');
-    }
-    
-    if (errors.length > 0) {
-        throw new Error(errors.join('. '));
-    }
+    if (data.name && data.name.trim() === '') errors.push('Tên không được để trống');
+    if (data.date && !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) errors.push('Định dạng ngày không hợp lệ');
+    if (data.amount && (isNaN(data.amount) || Number(data.amount) <= 0)) errors.push('Số tiền không hợp lệ');
+    if (errors.length > 0) throw new Error(errors.join('. '));
     return true;
 }
 
-// Thêm sau phần VALIDATION FUNCTIONS
 // ===============================================================
 // CONCURRENCY CONTROL
 // ===============================================================
@@ -63,16 +101,6 @@ function getLock() {
     return lock;
 }
 
-// ===============================================================
-// WEB APP SERVING
-// ===============================================================
-function doGet(e) {
-  // Luôn hiển thị trang chính cho bất kỳ ai truy cập
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
-    .setTitle('Quản Lý Trung Tâm')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
 
 // ===============================================================
 // DATA RETRIEVAL
@@ -450,12 +478,108 @@ function getStudentProfile(studentId) {
   }
 }
 
+// ===============================================================
+// PRINTING DATA FUNCTIONS
+// ===============================================================
+
+function getFeeNoticeData(studentId) {
+  try {
+    if (!studentId) throw new Error("Cần có mã học viên.");
+
+    const studentsSheet = getSheet(CONFIG.STUDENTS_SHEET);
+    const allStudents = studentsSheet.getDataRange().getValues();
+    const studentRow = allStudents.find(row => row[0] === studentId);
+    if (!studentRow) throw new Error("Không tìm thấy học viên.");
+
+    const enrollments = getSheet(CONFIG.ENROLLMENTS_SHEET).getDataRange().getValues().slice(1).filter(e => e[1] === studentId);
+    const transactions = getSheet(CONFIG.TRANSACTIONS_SHEET).getDataRange().getValues().slice(1).filter(t => t[1] === studentId);
+    
+    const feeTypeMap = new Map(getSheet(CONFIG.FEE_TYPES_SHEET).getDataRange().getValues().slice(1).map(f => [f[0], { name: f[1], amount: Number(f[2] || 0) }]));
+    const classMap = new Map(getSheet(CONFIG.CLASSES_SHEET).getDataRange().getValues().slice(1).map(c => [c[0], c[1]]));
+
+    let totalDue = 0;
+    const feeDetails = enrollments.map(e => {
+      const classId = e[2];
+      const feeTypeId = e[4];
+      const feeType = feeTypeMap.get(feeTypeId);
+      if (feeType) {
+        totalDue += feeType.amount;
+        const className = classMap.get(classId) || 'N/A';
+        return `<tr><td>Học phí lớp ${className} - ${feeType.name}</td><td>${feeType.amount.toLocaleString('vi-VN')}</td></tr>`;
+      }
+      return '';
+    }).join('');
+
+    const totalPaid = transactions.reduce((sum, t) => sum + Number(t[3] || 0), 0);
+    const remaining = totalDue - totalPaid;
+
+    return {
+      success: true,
+      data: {
+        studentId: studentRow[0],
+        studentName: studentRow[1],
+        parentName: studentRow[3],
+        phone: studentRow[4],
+        totalDue: totalDue.toLocaleString('vi-VN'),
+        totalPaid: totalPaid.toLocaleString('vi-VN'),
+        remaining: remaining.toLocaleString('vi-VN'),
+        feeDetails: feeDetails
+      }
+    };
+  } catch (e) {
+    Logger.log("Lỗi khi lấy dữ liệu phiếu báo học phí: " + e.toString());
+    return { success: false, error: e.toString() };
+  }
+}
+
+function getReceiptData(studentId) {
+  try {
+    if (!studentId) throw new Error("Cần có mã học viên.");
+    
+    const studentsSheet = getSheet(CONFIG.STUDENTS_SHEET);
+    const allStudents = studentsSheet.getDataRange().getValues();
+    const studentRow = allStudents.find(row => row[0] === studentId);
+    if (!studentRow) throw new Error("Không tìm thấy học viên.");
+
+    const transactions = getSheet(CONFIG.TRANSACTIONS_SHEET).getDataRange().getValues().slice(1).filter(t => t[1] === studentId);
+    if (transactions.length === 0) {
+      throw new Error("Học viên này chưa có thanh toán nào để in biên lai.");
+    }
+    
+    let totalPaid = 0;
+    const transactionDetails = transactions.map(t => {
+      totalPaid += Number(t[3] || 0);
+      const date = Utilities.formatDate(new Date(t[4]), CONFIG.DEFAULT_TIMEZONE, 'dd/MM/yyyy');
+      return `<tr>
+                <td>${date}</td>
+                <td>${t[5] || 'Thanh toán học phí'}</td>
+                <td>${t[7] || 'N/A'}</td>
+                <td>${Number(t[3] || 0).toLocaleString('vi-VN')}</td>
+              </tr>`;
+    }).join('');
+
+    return {
+      success: true,
+      data: {
+        studentId: studentRow[0],
+        studentName: studentRow[1],
+        parentName: studentRow[3],
+        phone: studentRow[4],
+        totalPaid: totalPaid.toLocaleString('vi-VN'),
+        transactionDetails: transactionDetails
+      }
+    };
+  } catch (e) {
+    Logger.log("Lỗi khi lấy dữ liệu biên lai: " + e.toString());
+    return { success: false, error: e.toString() };
+  }
+}
 
 // ===============================================================
 // UTILITY FUNCTIONS
 // ===============================================================
 function include(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  return HtmlService.createTemplateFromFile(filename).evaluate().getContent();
 }
 
 function generateNextId(sheet, column, prefix) {

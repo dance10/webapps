@@ -12,6 +12,65 @@
     currentSessionId: null
   };
 
+  function handleLogin(event) {
+    event.preventDefault();
+    showLoading();
+    const username = document.getElementById('username').value; // Changed from email
+    const password = document.getElementById('password').value;
+    
+    google.script.run
+      .withSuccessHandler(onLoginSuccess)
+      .withFailureHandler(handleError)
+      .login({ username, password }); // Pass username
+  }
+
+  function onLoginSuccess(response) {
+    if (response.success) {
+      window.APP_DATA = response.data;
+      
+      google.script.run
+        .withSuccessHandler(function(html) {
+          hideLoading();
+          document.getElementById('login-container').style.display = 'none';
+          const appWrapper = document.getElementById('app-wrapper');
+          appWrapper.innerHTML = html;
+          appWrapper.style.display = 'block';
+          initializeMainApp();
+        })
+        .withFailureHandler(handleError)
+        .include('Index');
+
+    } else {
+      hideLoading();
+      handleError(response.error);
+    }
+  }
+
+  function initializeMainApp() {
+    // Set up UI based on user role
+    updateUIForRole();
+
+    // Display user info
+    document.getElementById('user-email-display').textContent = window.APP_DATA.userEmail;
+    document.getElementById('user-role-display').textContent = `(${window.APP_DATA.userRole})`;
+
+    // Initialize navigation
+    initializeNavigation();
+
+    // Determine and load the starting page
+    let startingPage = 'Dashboard'; // Default for Admin, LeTan
+    if (window.APP_DATA.userRole === 'GiaoVien') {
+      startingPage = 'ThoiKhoaBieu';
+    }
+    
+    const startingNav = document.querySelector(`.nav-item[data-page="${startingPage}"]`);
+    if (startingNav) {
+      startingNav.classList.add('active');
+    }
+    loadPage(startingPage, true);
+  }
+
+
   // --- CÁC HÀM RENDER CHO TỪNG TRANG ---
   function renderDashboard() {
     showLoading();
@@ -198,9 +257,13 @@
     const teachers = window.APP_DATA.teachers || [];
 
     if (role === 'GiaoVien') {
-      const teacherInfo = teachers.find(t => t.email === userEmail);
-      const teacherName = teacherInfo ? teacherInfo.name : userEmail;
-      teacherSelect.innerHTML = `<option value="${teacherName}">${teacherName}</option>`;
+      const loggedInTeacherId = window.APP_DATA.teacherId; // Lấy teacherId đã lưu
+      const teacherInfo = teachers.find(t => t.id === loggedInTeacherId); // Tìm giáo viên theo ID
+      if (teacherInfo) {
+        teacherSelect.innerHTML = `<option value="${teacherInfo.name}">${teacherInfo.name}</option>`;
+      } else {
+        teacherSelect.innerHTML = `<option value="">Không tìm thấy TKB</option>`;
+      }
       teacherSelect.disabled = true;
     } else {
       teacherSelect.innerHTML = '<option value="">-- Tất cả giáo viên --</option>' + teachers.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
@@ -234,9 +297,11 @@
       const remaining = totalDue - totalPaid;
       let actionButtons = '';
       if (userRole === 'Admin' || userRole === 'LeTan') {
-        actionButtons += `<button class="btn btn-primary btn-sm" onclick="APP.showAddTransactionModal('${student.id}')" style="margin-right: 5px;"><i class="fas fa-plus"></i> Thêm TT</button>`;
+        actionButtons += `<button class="btn btn-primary btn-sm" onclick="APP.showAddTransactionModal('${student.id}')" title="Thêm Thanh Toán" style="margin-right: 5px;"><i class="fas fa-plus"></i></button>`;
+        actionButtons += `<button class="btn btn-info btn-sm" onclick="APP.printFeeNotice('${student.id}')" title="In Phiếu Báo Học Phí" style="margin-right: 5px;"><i class="fas fa-file-invoice"></i></button>`;
+        actionButtons += `<button class="btn btn-success btn-sm" onclick="APP.printReceipt('${student.id}')" title="In Biên Lai" style="margin-right: 5px;"><i class="fas fa-receipt"></i></button>`;
       }
-      actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showTransactionHistoryModal('${student.id}')"><i class="fas fa-history"></i> Xem LS</button>`;
+      actionButtons += `<button class="btn btn-secondary btn-sm" onclick="APP.showTransactionHistoryModal('${student.id}')" title="Xem Lịch Sử Giao Dịch"><i class="fas fa-history"></i></button>`;
       const row = tbody.insertRow();
       row.innerHTML = `
             <td>${student.id}</td>
@@ -392,12 +457,7 @@
   }
   // --- KẾT THÚC KHỐI RENDER ---
 
-  function initializeApp() {
-    loadInitialData();
-    initializeNavigation();
-  }
-
-  function loadInitialData() {
+    function loadInitialData() {
     showLoading();
     // Ham nay gio chi lay thong tin nguoi dung va config
     google.script.run
@@ -2262,6 +2322,107 @@
         })
         .getGeminiAnalysis();
     },
+    printFeeNotice: function(studentId) {
+      // Mở cửa sổ mới ngay lập tức để tránh bị trình duyệt chặn
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert("Vui lòng cho phép mở cửa sổ pop-up cho trang web này.");
+        return;
+      }
+      printWindow.document.write('<html><head><title>Đang tải phiếu báo...</title></head><body><p>Vui lòng chờ, đang tải dữ liệu...</p></body></html>');
+      
+      showLoading(); // Hiển thị loading ở trang chính
+      google.script.run
+        .withSuccessHandler(response => {
+          if (response.success) {
+            const data = response.data;
+            google.script.run
+              .withSuccessHandler(template => {
+                hideLoading();
+                let content = template;
+                content = content.replace('{{currentDate}}', new Date().toLocaleDateString('vi-VN'));
+                content = content.replace('{{studentName}}', data.studentName);
+                content = content.replace('{{studentId}}', data.studentId);
+                content = content.replace('{{parentName}}', data.parentName || '');
+                content = content.replace('{{phone}}', data.phone || '');
+                content = content.replace('{{feeDetails}}', data.feeDetails);
+                content = content.replace('{{totalDue}}', data.totalDue);
+                content = content.replace('{{totalPaid}}', data.totalPaid);
+                content = content.replace('{{remaining}}', data.remaining);
+                content = content.replace('{{remainingInWords}}', `(Số tiền còn lại)`); 
+
+                // Ghi nội dung vào cửa sổ đã mở
+                printWindow.document.open();
+                printWindow.document.write(content);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => { printWindow.print(); }, 500);
+              })
+              .withFailureHandler(handleError)
+              .include('PhieuBaoHocPhi');
+          } else {
+            hideLoading();
+            printWindow.close(); // Đóng cửa sổ nếu có lỗi
+            handleError(response.error);
+          }
+        })
+        .withFailureHandler(e => { 
+          hideLoading(); 
+          printWindow.close(); // Đóng cửa sổ nếu có lỗi
+          handleError(e); 
+        })
+        .getFeeNoticeData(studentId);
+    },
+
+    printReceipt: function(studentId) {
+      // Mở cửa sổ mới ngay lập tức
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert("Vui lòng cho phép mở cửa sổ pop-up cho trang web này.");
+        return;
+      }
+      printWindow.document.write('<html><head><title>Đang tải biên lai...</title></head><body><p>Vui lòng chờ, đang tải dữ liệu...</p></body></html>');
+
+      showLoading();
+      google.script.run
+        .withSuccessHandler(response => {
+          if (response.success) {
+            const data = response.data;
+            google.script.run
+              .withSuccessHandler(template => {
+                hideLoading();
+                let content = template;
+                content = content.replace('{{currentDate}}', new Date().toLocaleDateString('vi-VN'));
+                content = content.replace('{{studentName}}', data.studentName);
+                content = content.replace('{{studentId}}', data.studentId);
+                content = content.replace('{{parentName}}', data.parentName || '');
+                content = content.replace('{{phone}}', data.phone || '');
+                content = content.replace('{{transactionDetails}}', data.transactionDetails);
+                content = content.replace('{{totalPaid}}', data.totalPaid);
+                content = content.replace('{{totalPaidInWords}}', `(Tổng số tiền đã thanh toán)`);
+
+                // Ghi nội dung vào cửa sổ đã mở
+                printWindow.document.open();
+                printWindow.document.write(content);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => { printWindow.print(); }, 500);
+              })
+              .withFailureHandler(handleError)
+              .include('BienLaiHocPhi');
+          } else {
+            hideLoading();
+            printWindow.close();
+            handleError(response.error);
+          }
+        })
+        .withFailureHandler(e => { 
+          hideLoading(); 
+          printWindow.close();
+          handleError(e); 
+        })
+        .getReceiptData(studentId);
+    },
   };
 
   // --- GLOBAL EVENT LISTENERS ---
@@ -2273,8 +2434,7 @@
       }
     }
   });
-  document.addEventListener('DOMContentLoaded', initializeApp);
-
+  
   function handleServerError(error) {
     console.error('Server error:', error);
     const errorMessage = error.message || 'Đã có lỗi xảy ra';
